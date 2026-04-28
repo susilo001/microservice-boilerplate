@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(GONOSUMCHECK=\"*\" go list -m -versions go.opentelemetry.io/contrib/instrumentation/gorm.io/gorm/v2/otelgorm)",
+      "Bash(curl -s \"https://proxy.golang.org/go.opentelemetry.io/contrib/instrumentation/gorm.io/gorm/v2/otelgorm/@v/list\")",
+      "Bash(curl -s \"https://proxy.golang.org/go.opentelemetry.io/contrib/instrumentation/gorm.io/gorm/v2/otelgorm/@v/v0.53.0.info\")",
+      "Bash(curl -s \"https://proxy.golang.org/go.opentelemetry.io/contrib/instrumentation/gorm.io/gorm/v2/otelgorm/@v/v0.54.0.info\")",
+      "Bash(curl -s \"https://proxy.golang.org/go.opentelemetry.io/contrib/instrumentation/gorm.io/gorm/v2/otelgorm/@v/v0.60.0.info\")",
+      "Bash(curl -s \"https://proxy.golang.org/github.com/uptrace/opentelemetry-go-extra/otelgorm/@v/list\")",
+      "Bash(curl -s \"https://proxy.golang.org/gorm.io/plugin/opentelemetry/@v/list\")",
+      "Bash(GOFLAGS=\"-mod=mod\" go mod download)",
+      "Bash(go install *)",
+      "Bash(swag init *)",
+      "Bash(GOFLAGS=\"-mod=mod\" go mod download golang.org/x/text github.com/gin-gonic/gin)",
+      "Bash(GOFLAGS=\"-mod=mod\" go mod tidy)",
+      "Bash(go build *)"
+    ]
+  }
+}

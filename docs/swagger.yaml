@@ -1,0 +1,239 @@
+basePath: /
+definitions:
+  github_com_boilerplate_microservice-boilerplate_internal_product_usecase_request.CreateProductRequest:
+    properties:
+      description:
+        example: Compact mechanical keyboard
+        type: string
+      name:
+        example: Wireless Keyboard
+        type: string
+      price:
+        example: 49.99
+        type: number
+      stock:
+        example: 100
+        minimum: 0
+        type: integer
+    required:
+    - name
+    - price
+    type: object
+  github_com_boilerplate_microservice-boilerplate_internal_product_usecase_request.UpdateProductRequest:
+    properties:
+      description:
+        example: Updated description
+        type: string
+      name:
+        example: Wireless Keyboard Pro
+        type: string
+      price:
+        example: 59.99
+        type: number
+      stock:
+        example: 75
+        minimum: 0
+        type: integer
+    required:
+    - name
+    - price
+    type: object
+  github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse:
+    properties:
+      error:
+        example: something went wrong
+        type: string
+    type: object
+  github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ProductResponse:
+    properties:
+      created_at:
+        example: "2026-01-15T09:00:00Z"
+        type: string
+      description:
+        example: Compact mechanical keyboard
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      name:
+        example: Wireless Keyboard
+        type: string
+      price:
+        example: 49.99
+        type: number
+      stock:
+        example: 100
+        type: integer
+      updated_at:
+        example: "2026-04-21T12:30:00Z"
+        type: string
+    type: object
+host: localhost:8003
+info:
+  contact:
+    email: susiloodie@gmail.com
+  description: Clean Architecture Go microservice for product management.
+  title: Product Microservice API
+  version: "1.0"
+paths:
+  /api/v1/products:
+    get:
+      description: Returns a list of all available products.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ProductResponse'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse'
+      summary: List products
+      tags:
+      - products
+    post:
+      consumes:
+      - application/json
+      description: Creates a new product. Requires Bearer JWT authentication.
+      parameters:
+      - description: Product payload
+        in: body
+        name: product
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_request.CreateProductRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ProductResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create product
+      tags:
+      - products
+  /api/v1/products/{id}:
+    delete:
+      description: Permanently deletes a product. Requires Bearer JWT authentication.
+      parameters:
+      - description: Product UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete product
+      tags:
+      - products
+    get:
+      description: Returns a single product identified by its UUID.
+      parameters:
+      - description: Product UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ProductResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse'
+      summary: Get product by ID
+      tags:
+      - products
+    put:
+      consumes:
+      - application/json
+      description: Replaces all fields of an existing product. Requires Bearer JWT
+        authentication.
+      parameters:
+      - description: Product UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Updated product payload
+        in: body
+        name: product
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_request.UpdateProductRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ProductResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update product
+      tags:
+      - products
+securityDefinitions:
+  BearerAuth:
+    description: 'JWT Bearer token. Format: "Bearer <token>"'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
