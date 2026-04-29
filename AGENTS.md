@@ -2,7 +2,8 @@
 
 > Architecture: Event-Driven (EDA) + Clean Architecture + Domain-Driven Design  
 > Module: `github.com/boilerplate/microservice-boilerplate`  
-> Go: 1.23
+> Go: 1.23  
+> See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system diagram.
 
 ---
 

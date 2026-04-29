@@ -53,7 +53,8 @@ pkg/
 docs/           # Generated Swagger UI (swag init output)
 ```
 
-See [AGENTS.md](AGENTS.md) for the full architecture specification and coding conventions.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system diagram and flow reference.  
+See [AGENTS.md](AGENTS.md) for the architecture specification and coding conventions.
 
 ## Prerequisites
 
