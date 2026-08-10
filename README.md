@@ -186,7 +186,7 @@ DSN format per driver:
 |---|---|---|
 | `GET` | `/health` | Liveness check |
 | `GET` | `/swagger/*any` | Swagger UI |
-| `GET` | `/api/v1/products` | List products (paginated: `?page=1&page_size=20`) |
+| `GET` | `/api/v1/products` | List products (paginated `?page=1&page_size=20`, searchable `?search=widget`, sortable `?sort_by=price&sort_dir=desc`, preloadable `?preload=relation`) |
 | `GET` | `/api/v1/products/:id` | Get product by ID |
 | `POST` | `/api/v1/products` | Create product |
 | `PUT` | `/api/v1/products/:id` | Update product |

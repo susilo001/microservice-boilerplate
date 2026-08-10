@@ -2,10 +2,13 @@ package usecase_test
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
 	domainEvent "github.com/boilerplate/microservice-boilerplate/internal/product/domain/event"
+	domainrepo "github.com/boilerplate/microservice-boilerplate/internal/product/domain/repository"
 )
 
 type mockProductRepository struct {
@@ -52,15 +55,23 @@ func (m *mockProductRepository) FindAll(_ context.Context) ([]entity.Product, er
 	return out, nil
 }
 
-func (m *mockProductRepository) FindAllPaginated(_ context.Context, offset, limit int) ([]entity.Product, int64, error) {
+func (m *mockProductRepository) FindAllPaginated(_ context.Context, params domainrepo.ListParams) ([]entity.Product, int64, error) {
 	if m.findErr != nil {
 		return nil, 0, m.findErr
 	}
 	all := make([]entity.Product, 0, len(m.products))
 	for _, p := range m.products {
+		if params.Search != "" {
+			s := strings.ToLower(params.Search)
+			if !strings.Contains(strings.ToLower(p.Name), s) && !strings.Contains(strings.ToLower(p.Description), s) {
+				continue
+			}
+		}
 		all = append(all, *p)
 	}
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
 	total := int64(len(all))
+	offset, limit := params.Offset, params.Limit
 	if offset >= len(all) {
 		return []entity.Product{}, total, nil
 	}

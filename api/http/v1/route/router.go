@@ -27,6 +27,9 @@ func NewRouter(handler *producthttp.ProductHandler, ingestHandler *analyticshttp
 		if errors.Is(err, entity.ErrProductNotFound) {
 			return http.StatusNotFound
 		}
+		if errors.Is(err, entity.ErrInvalidSortField) || errors.Is(err, entity.ErrInvalidPreload) {
+			return http.StatusBadRequest
+		}
 		return http.StatusInternalServerError
 	}))
 

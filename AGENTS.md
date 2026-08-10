@@ -413,6 +413,30 @@ type Event interface {
 - `*gorm.DB` never leaves `internal/product/repository/`
 - `*pgxpool.Pool` never leaves `internal/analytics/repository/`
 
+### List endpoints (search / sort / preload)
+- Convention established by `internal/product`'s `GET /api/v1/products` —
+  follow this shape for any new CRUD domain's list endpoint.
+- Query params: `search` (substring match), `sort_by` + `sort_dir`
+  (`asc`/`desc`), `preload` (comma-separated relation names).
+- **`sort_by` and `preload` values must be validated against a fixed
+  allow-list in the usecase layer before being passed to the repository.**
+  GORM's `Order()` and `Preload()` do not parameterize/escape arbitrary
+  input the way `Where()` placeholders do — passing a raw query-string
+  value straight into `Order()` is a SQL-injection-shaped bug even though
+  it goes through GORM. See `internal/product/usecase/list_products.go`'s
+  `allowedSortFields` / `allowedPreloads` maps. Unrecognized values return
+  a domain sentinel error (`ErrInvalidSortField` / `ErrInvalidPreload`)
+  mapped to HTTP `400`, never silently ignored or passed through.
+- Search is a portable `LOWER(col) LIKE ?` across all four GORM drivers —
+  not driver-specific full-text search (`tsvector`, `FULLTEXT`, FTS5,
+  `CONTAINS`). This is a deliberate simplification (`ponytail:` comment in
+  `product_repository.go`): fine for a boilerplate reference domain;
+  swap for Postgres `tsvector` + GIN index if ranked relevance is ever
+  needed, rather than silently defaulting either way.
+- `preload`'s allow-list may be empty for a domain with no relations
+  (e.g. `Product` today) — that's correct, not a bug; every `preload`
+  value is then rejected until a real relation is added.
+
 ### Error handling
 - Domain sentinel errors defined in `domain/entity/`
 - HTTP status mapping in `api/http/v1/route/router.go` (closure passed to `ErrorHandler`)

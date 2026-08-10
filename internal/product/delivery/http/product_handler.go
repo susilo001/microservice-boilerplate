@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -73,12 +74,17 @@ func (h *ProductHandler) GetByID(c *gin.Context) {
 // List returns a paginated list of products.
 //
 // @Summary      List products
-// @Description  Returns a paginated list of all available products.
+// @Description  Returns a paginated list of products. Supports substring search across name/description, whitelisted sort fields, and optional relation preloading.
 // @Tags         products
 // @Produce      json
-// @Param        page       query     int  false  "Page number (default 1)"
-// @Param        page_size  query     int  false  "Items per page (default 20)"
+// @Param        page       query     int     false  "Page number (default 1)"
+// @Param        page_size  query     int     false  "Items per page (default 20)"
+// @Param        search     query     string  false  "Substring search across name and description"
+// @Param        sort_by    query     string  false  "Sort field: name, price, stock, created_at, updated_at"
+// @Param        sort_dir   query     string  false  "Sort direction: asc (default) or desc"
+// @Param        preload    query     string  false  "Comma-separated relations to eager-load"
 // @Success      200  {object}  apiresp.APIResponse[apiresp.ListData[response.ProductResponse]]
+// @Failure      400  {object}  apiresp.APIResponse[struct{}]
 // @Failure      500  {object}  apiresp.APIResponse[struct{}]
 // @Router       /api/v1/products [get]
 func (h *ProductHandler) List(c *gin.Context) {
@@ -87,15 +93,23 @@ func (h *ProductHandler) List(c *gin.Context) {
 
 	tin := apiresp.ContextTime(c, "tin")
 	correlationID := c.GetString("correlationid")
-	page := queryInt(c, "page", 1)
-	pageSize := queryInt(c, "page_size", 20)
+	req := request.ListProductsRequest{
+		Page:     queryInt(c, "page", 1),
+		PageSize: queryInt(c, "page_size", 20),
+		Search:   c.Query("search"),
+		SortBy:   c.Query("sort_by"),
+		SortDir:  c.Query("sort_dir"),
+		Preload:  queryList(c, "preload"),
+	}
 	span.SetAttributes(
-		attribute.Int("page", page),
-		attribute.Int("page_size", pageSize),
+		attribute.Int("page", req.Page),
+		attribute.Int("page_size", req.PageSize),
+		attribute.String("search", req.Search),
+		attribute.String("sort_by", req.SortBy),
 	)
 
 	start := time.Now()
-	res, total, err := h.listUC.Execute(ctx, page, pageSize)
+	res, total, err := h.listUC.Execute(ctx, req)
 	finish := time.Now()
 
 	if err != nil {
@@ -105,7 +119,7 @@ func (h *ProductHandler) List(c *gin.Context) {
 		return
 	}
 	span.SetAttributes(attribute.Int64("total", total))
-	c.JSON(http.StatusOK, apiresp.NewList(correlationID, tin, time.Now(), res, page, pageSize, total, start, finish))
+	c.JSON(http.StatusOK, apiresp.NewList(correlationID, tin, time.Now(), res, req.Page, req.PageSize, total, start, finish))
 }
 
 // Create creates a new product.
@@ -224,4 +238,21 @@ func queryInt(c *gin.Context, key string, defaultVal int) int {
 		return defaultVal
 	}
 	return v
+}
+
+// queryList splits a comma-separated query param into a trimmed, non-empty slice.
+func queryList(c *gin.Context, key string) []string {
+	s := c.Query(key)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

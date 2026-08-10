@@ -111,7 +111,7 @@ func TestProductRepository_FindAllPaginated(t *testing.T) {
 		}
 	}
 
-	products, total, err := repo.FindAllPaginated(context.Background(), 0, 2)
+	products, total, err := repo.FindAllPaginated(context.Background(), domainrepo.ListParams{Offset: 0, Limit: 2})
 	if err != nil {
 		t.Fatalf("FindAllPaginated: %v", err)
 	}
@@ -120,5 +120,37 @@ func TestProductRepository_FindAllPaginated(t *testing.T) {
 	}
 	if len(products) != 2 {
 		t.Errorf("page size = %d, want 2", len(products))
+	}
+}
+
+func TestProductRepository_FindAllPaginated_SearchAndSort(t *testing.T) {
+	repo := setup(t)
+
+	seeds := []entity.Product{
+		{ID: "test-search-1", Name: "Zebra Widget", Price: 30, Stock: 1},
+		{ID: "test-search-2", Name: "Aardvark Widget", Price: 10, Stock: 2},
+		{ID: "test-search-3", Name: "Unrelated Item", Price: 20, Stock: 3},
+	}
+	for i := range seeds {
+		if err := repo.Create(context.Background(), &seeds[i]); err != nil {
+			t.Fatalf("seed Create: %v", err)
+		}
+	}
+
+	products, total, err := repo.FindAllPaginated(context.Background(), domainrepo.ListParams{
+		Offset:  0,
+		Limit:   10,
+		Search:  "widget",
+		SortBy:  "price",
+		SortDir: "asc",
+	})
+	if err != nil {
+		t.Fatalf("FindAllPaginated: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("total = %d, want 2", total)
+	}
+	if len(products) != 2 || products[0].Name != "Aardvark Widget" {
+		t.Errorf("products = %+v, want Aardvark Widget first (sorted by price asc)", products)
 	}
 }

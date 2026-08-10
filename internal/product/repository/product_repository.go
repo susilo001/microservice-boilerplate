@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -68,22 +69,47 @@ func (r *productRepository) FindAll(ctx context.Context) ([]entity.Product, erro
 	return products, nil
 }
 
-func (r *productRepository) FindAllPaginated(ctx context.Context, offset, limit int) ([]entity.Product, int64, error) {
+func (r *productRepository) FindAllPaginated(ctx context.Context, params domainrepo.ListParams) ([]entity.Product, int64, error) {
 	ctx, span := tracer.Start(ctx, "product.repository.FindAllPaginated")
 	defer span.End()
 	span.SetAttributes(
-		attribute.Int("offset", offset),
-		attribute.Int("limit", limit),
+		attribute.Int("offset", params.Offset),
+		attribute.Int("limit", params.Limit),
+		attribute.String("search", params.Search),
+		attribute.String("sort_by", params.SortBy),
+		attribute.String("sort_dir", params.SortDir),
 	)
 
+	// base query shared by count + find, filters applied once
+	query := r.db.WithContext(ctx).Model(&entity.Product{})
+	if params.Search != "" {
+		// portable substring search across drivers (postgres/mysql/sqlite/sqlserver).
+		// ponytail: swap for Postgres tsvector + GIN index if ranked relevance is
+		// ever needed; LIKE is fine for a boilerplate reference domain.
+		like := "%" + strings.ToLower(params.Search) + "%"
+		query = query.Where("LOWER(name) LIKE ? OR LOWER(description) LIKE ?", like, like)
+	}
+
 	var total int64
-	if err := r.db.WithContext(ctx).Model(&entity.Product{}).Count(&total).Error; err != nil {
+	if err := query.Count(&total).Error; err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, 0, fmt.Errorf("repository count products: %w", err)
 	}
+
+	findQuery := query.Session(&gorm.Session{}).Offset(params.Offset).Limit(params.Limit)
+	if params.SortBy != "" {
+		// caller (usecase) must have already validated SortBy/SortDir against
+		// a whitelist — raw query-string values must never reach Order().
+		findQuery = findQuery.Order(params.SortBy + " " + params.SortDir)
+	}
+	for _, rel := range params.Preload {
+		// same whitelist contract as SortBy — see usecase.allowedPreloads.
+		findQuery = findQuery.Preload(rel)
+	}
+
 	var products []entity.Product
-	if err := r.db.WithContext(ctx).Offset(offset).Limit(limit).Find(&products).Error; err != nil {
+	if err := findQuery.Find(&products).Error; err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, 0, fmt.Errorf("repository find paginated products: %w", err)

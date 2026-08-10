@@ -5,7 +5,11 @@ import (
 	"time"
 )
 
-var ErrProductNotFound = errors.New("product not found")
+var (
+	ErrProductNotFound  = errors.New("product not found")
+	ErrInvalidSortField = errors.New("invalid sort field")
+	ErrInvalidPreload   = errors.New("invalid preload relation")
+)
 
 type Product struct {
 	ID          string    `gorm:"primaryKey;type:varchar(36)"`
