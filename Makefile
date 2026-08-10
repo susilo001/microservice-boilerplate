@@ -1,4 +1,4 @@
-.PHONY: build test test-race run lint tidy \
+.PHONY: build test test-race run worker lint tidy \
         swagger swagger-install \
         infra-up infra-down \
         docker-build docker-run docker-push
@@ -29,6 +29,9 @@ test-race:
 
 run:
 	go run ./cmd/web
+
+worker:
+	go run ./cmd/worker
 
 lint:
 	golangci-lint run ./...

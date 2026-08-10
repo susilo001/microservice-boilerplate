@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -19,7 +20,8 @@ func main() {
 
 	logger, err := pkglogger.NewLogger()
 	if err != nil {
-		panic(fmt.Sprintf("init logger: %v", err))
+		fmt.Fprintf(os.Stderr, "init logger: %v\n", err)
+		os.Exit(1)
 	}
 	defer logger.Sync() //nolint:errcheck
 

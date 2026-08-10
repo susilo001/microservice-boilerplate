@@ -10,9 +10,10 @@ type Config struct {
 	AppPort string
 	GinMode string
 
-	DB    DBConfig
-	Redis RedisConfig
-	Kafka KafkaConfig
+	DB        DBConfig
+	Analytics AnalyticsConfig
+	Redis     RedisConfig
+	Kafka     KafkaConfig
 
 	OTelServiceName string
 }
@@ -25,6 +26,15 @@ type DBConfig struct {
 	MaxIdleConns    int
 	ConnMaxLifetime time.Duration
 	ConnMaxIdleTime time.Duration
+}
+
+type AnalyticsConfig struct {
+	DBDSN         string
+	DBMaxConns    int32
+	BatchSize     int
+	BatchTimeout  time.Duration
+	Topic         string
+	ConsumerGroup string
 }
 
 type RedisConfig struct {
@@ -46,6 +56,7 @@ type KafkaConfig struct {
 	RequiredAcks string // "all" | "leader" | "none"
 	Async        bool
 	Compression  string // "none" | "gzip" | "snappy" | "lz4" | "zstd"
+	Topic        string // analytics domain's ingest topic
 }
 
 func Load() Config {
@@ -80,6 +91,14 @@ func Load() Config {
 	v.SetDefault("KAFKA_REQUIRED_ACKS", "all")
 	v.SetDefault("KAFKA_ASYNC", false)
 	v.SetDefault("KAFKA_COMPRESSION", "none")
+	v.SetDefault("KAFKA_TOPIC", "raw-events")
+	v.SetDefault("KAFKA_CONSUMER_GROUP", "analytics-processor")
+
+	// Analytics (internal/analytics domain)
+	v.SetDefault("ANALYTICS_DB_DSN", "postgres://postgres:postgres@localhost:5432/analyticsdb?sslmode=disable")
+	v.SetDefault("ANALYTICS_DB_MAX_CONNS", 10)
+	v.SetDefault("BATCH_SIZE", 500)
+	v.SetDefault("BATCH_TIMEOUT", "200ms")
 
 	// OTel
 	v.SetDefault("OTEL_SERVICE_NAME", "product-service")
@@ -96,6 +115,15 @@ func Load() Config {
 			MaxIdleConns:    v.GetInt("DB_MAX_IDLE_CONNS"),
 			ConnMaxLifetime: v.GetDuration("DB_CONN_MAX_LIFETIME"),
 			ConnMaxIdleTime: v.GetDuration("DB_CONN_MAX_IDLE_TIME"),
+		},
+
+		Analytics: AnalyticsConfig{
+			DBDSN:         v.GetString("ANALYTICS_DB_DSN"),
+			DBMaxConns:    int32(v.GetInt("ANALYTICS_DB_MAX_CONNS")),
+			BatchSize:     v.GetInt("BATCH_SIZE"),
+			BatchTimeout:  v.GetDuration("BATCH_TIMEOUT"),
+			Topic:         v.GetString("KAFKA_TOPIC"),
+			ConsumerGroup: v.GetString("KAFKA_CONSUMER_GROUP"),
 		},
 
 		Redis: RedisConfig{
@@ -117,6 +145,7 @@ func Load() Config {
 			RequiredAcks: v.GetString("KAFKA_REQUIRED_ACKS"),
 			Async:        v.GetBool("KAFKA_ASYNC"),
 			Compression:  v.GetString("KAFKA_COMPRESSION"),
+			Topic:        v.GetString("KAFKA_TOPIC"),
 		},
 
 		OTelServiceName: v.GetString("OTEL_SERVICE_NAME"),

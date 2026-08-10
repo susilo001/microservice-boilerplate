@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -13,6 +14,9 @@ import (
 	apiroute "github.com/boilerplate/microservice-boilerplate/api/http/v1/route"
 	"github.com/boilerplate/microservice-boilerplate/config"
 	_ "github.com/boilerplate/microservice-boilerplate/docs"
+	analyticshttp "github.com/boilerplate/microservice-boilerplate/internal/analytics/delivery/http"
+	analyticsmessaging "github.com/boilerplate/microservice-boilerplate/internal/analytics/gateway/messaging"
+	analyticsusecase "github.com/boilerplate/microservice-boilerplate/internal/analytics/usecase"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/cache"
 	producthttp "github.com/boilerplate/microservice-boilerplate/internal/product/delivery/http"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
@@ -39,7 +43,8 @@ func main() {
 
 	logger, err := pkglogger.NewLogger()
 	if err != nil {
-		panic(fmt.Sprintf("init logger: %v", err))
+		fmt.Fprintf(os.Stderr, "init logger: %v\n", err)
+		os.Exit(1)
 	}
 	defer logger.Sync() //nolint:errcheck
 
@@ -100,21 +105,27 @@ func main() {
 	})
 	defer kafkaWriter.Close()
 
-	// infrastructure
+	// infrastructure — product domain
 	productRepo := repository.NewProductRepository(db)
 	productCache := cache.NewProductCache(rdb)
 	productPublisher := messaging.NewProductPublisher(kafkaWriter)
 
-	// use cases
+	// use cases — product domain
 	getProductUC := usecase.NewGetProductUseCase(productRepo, productCache)
 	listProductsUC := usecase.NewListProductsUseCase(productRepo)
 	createProductUC := usecase.NewCreateProductUseCase(productRepo, productPublisher)
 	updateProductUC := usecase.NewUpdateProductUseCase(productRepo, productCache, productPublisher)
 	deleteProductUC := usecase.NewDeleteProductUseCase(productRepo, productCache)
 
+	// infrastructure — analytics domain (ingest path only; no DB pool here,
+	// the raw pgxpool belongs to cmd/worker's consumer, not the web server)
+	analyticsPublisher := analyticsmessaging.NewEventPublisher(kafkaWriter, cfg.Analytics.Topic)
+	publishEventUC := analyticsusecase.NewPublishEventUseCase(analyticsPublisher)
+	ingestHandler := analyticshttp.NewIngestHandler(publishEventUC)
+
 	// delivery
 	handler := producthttp.NewProductHandler(getProductUC, listProductsUC, createProductUC, updateProductUC, deleteProductUC)
-	router := apiroute.NewRouter(handler, logger, cfg.OTelServiceName)
+	router := apiroute.NewRouter(handler, ingestHandler, logger, cfg.OTelServiceName)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.AppPort,
