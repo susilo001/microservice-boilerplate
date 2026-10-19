@@ -154,6 +154,11 @@ DSN format per driver:
 | `KAFKA_ASYNC` | `false` | Fire-and-forget (no delivery guarantee) |
 | `KAFKA_COMPRESSION` | `none` | `none` · `gzip` · `snappy` · `lz4` · `zstd` |
 
+Redis cache operations and Kafka product-event publishing use three
+in-memory attempts with exponential backoff (50ms, 100ms, 200ms). This keeps
+the baseline simple but is not durable: a process restart or exhausted attempts
+can lose an event. Use a transactional outbox when guaranteed delivery is needed.
+
 ### OpenTelemetry
 
 | Variable | Default | Description |

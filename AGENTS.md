@@ -1,4 +1,10 @@
-# AGENTS.md — Go Microservice Boilerplate + High-Throughput Event Ingestion
+# AGENTS.md — Go Product Microservice Boilerplate
+
+> **Current scope:** this repository is a product-only CRUD baseline. The
+> `internal/analytics/` domain, `cmd/worker`, raw `pgx` pool, analytics
+> migration, and `/api/v1/events` endpoint have been removed. Any analytics
+> guidance below is historical only and must not be implemented or restored
+> without an explicit new product requirement.
 
 > Architecture: Event-Driven (EDA) + Clean Architecture + Domain-Driven Design
 > Module: `github.com/boilerplate/microservice-boilerplate`

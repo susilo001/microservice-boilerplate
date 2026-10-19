@@ -47,7 +47,7 @@ flowchart TB
 
     subgraph events[Event backbone]
         kafka[[Kafka]]
-        worker["Worker / Indexer<br/>outbox + CDC consumer"]
+        worker["Worker / Indexer<br/>Kafka consumer"]
     end
 
     otel[/"OTel → Jaeger / Tempo"/]:::obs
@@ -112,7 +112,7 @@ flowchart TB
 | API Gateway       | TLS termination, authentication, global rate limiting, routing              |
 | BFF               | Per-client REST/GraphQL endpoints; parallel gRPC fan-out; merge/reshape; aggregated-result cache |
 | Domain services   | One bounded context each (Product, Customer, DataMaster/Fee Settings, Order, Portfolio); gRPC server; own DB |
-| Worker / Indexer  | Consumes Kafka events (outbox/CDC); keeps the search index in sync; other side effects |
+| Worker / Indexer  | Consumes Kafka events; keeps the search index in sync; other side effects |
 | Search index      | Read model for advanced filter / full-text / faceted queries                |
 | Redis             | Hot-path cache (per-service namespaces; BFF caches merged payloads)         |
 | Kafka             | Event backbone between services and the worker                              |
@@ -172,9 +172,9 @@ a cap on filter fields, and a hard result cap.
 ```
 Client → API Gateway → BFF (span: bff.handler.CreateOrder)
   → gRPC Order service (span: order.usecase.CreateOrder)
-        → Repository.Create → DBResolver → Primary  (INSERT + outbox row, 1 txn)
+        → Repository.Create → DBResolver → Primary  (INSERT)
         → otelgorm auto-span for the SQL query
-  → outbox/CDC → Publisher.Publish → Kafka (order.created + W3C traceparent)
+  → Publisher.Publish → Kafka (order.created + W3C traceparent; bounded in-memory retry)
   → 201 APIResponse[OrderResponse]
 ```
 
@@ -183,9 +183,9 @@ Client → API Gateway → BFF (span: bff.handler.CreateOrder)
 ```
 Order service UpdateOrder:
   1. Repository.FindByID  → Replica  (read)
-  2. Repository.Update    → Primary  (write + outbox, 1 txn)
+  2. Repository.Update    → Primary  (write)
   3. Cache.Delete         → Redis    (immediate invalidation)
-  → CDC → Kafka (order.updated)
+  → Publisher.Publish → Kafka (order.updated; bounded in-memory retry)
 The BFF also evicts any aggregated cache entries that contained this order.
 ```
 
@@ -227,7 +227,7 @@ flowchart LR
 - **Cache invalidation:** delete-on-write for entities; the BFF evicts aggregated
   entries on related events.
 - **Search index:** a shared read model maintained asynchronously by the worker
-  from the outbox/CDC stream. Eventually consistent (typically sub-second), so
+  from Kafka events. Eventually consistent (typically sub-second), so
   read-your-writes cases read the owning service directly, not the index.
 
 ## Consistency & failure handling
@@ -238,8 +238,10 @@ flowchart LR
   configured consistently with the primary in each service.
 - **Partial failure.** The BFF decides per source whether to fail or degrade;
   circuit breakers fail fast on a struggling downstream.
-- **Outbox + CDC.** Avoids dual-write inconsistency — the business row and the
-  event row commit in the same transaction; CDC streams committed changes.
+- **In-memory retries.** Redis and Kafka operations retry with bounded
+  exponential backoff. This is not durable: a process restart or exhausted
+  attempts can lose a product event; use a transactional outbox when delivery
+  must be guaranteed.
 - **Idempotent consumers.** The worker handles redeliveries idempotently
   (search upsert by id, deduped side effects).
 
