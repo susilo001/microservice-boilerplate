@@ -2,9 +2,7 @@
 
 A production-ready Go microservice boilerplate built on Clean Architecture, Domain-Driven Design, and Event-Driven Architecture. Clone this repo as the starting point for any new Go service.
 
-Two reference domains ship out of the box:
-- **`internal/product/`** — standard CRUD with Redis caching and Kafka event publishing on writes (GORM).
-- **`internal/analytics/`** — high-throughput event ingestion: `POST /api/v1/events` publishes to Kafka and returns `202` immediately; a separate `cmd/worker` consumer batches records into Postgres via `COPY`. See [AGENTS.md](AGENTS.md#the-gorm-exception-internalanalytics) for why this domain bypasses GORM on its write path.
+The product domain is the reference implementation: standard CRUD with Redis caching and Kafka event publishing on writes (GORM).
 
 ## Stack
 
@@ -25,7 +23,6 @@ Two reference domains ship out of the box:
 ```
 cmd/
   web/          # HTTP server — wiring, OTel bootstrap, graceful shutdown
-  worker/       # analytics domain's Kafka consumer — batches + COPY-inserts into Postgres
   scheduler/    # Scheduled jobs — same wiring pattern as web
 api/
   http/
@@ -43,14 +40,6 @@ internal/
       messaging/  # Kafka producer — only layer that imports kafka-go
     delivery/
       http/     # Gin handlers
-  analytics/    # High-throughput ingestion domain — see AGENTS.md GORM exception
-    domain/     # Event entity, Publisher interface, EventRepository interface
-    usecase/    # PublishEventUseCase — validates, publishes to Kafka, never touches Postgres
-    repository/ # pgxpool + staging-table + COPY + ON CONFLICT DO NOTHING (not GORM)
-    gateway/
-      messaging/  # Kafka producer, BatchAccumulator (size-or-time), consumer batch loop
-    delivery/
-      http/     # POST /events — returns 202 before any DB write
 pkg/
   databases/    # Multi-driver DB factory (postgres/mysql/sqlite/sqlserver + DBResolver)
   redis/        # Redis client with pool and timeout config
@@ -114,6 +103,10 @@ Copy `.env.example` to `.env` — Viper loads it automatically on startup.
 |---|---|---|
 | `APP_PORT` | `8003` | HTTP server port |
 | `GIN_MODE` | `debug` | `debug` or `release` |
+| `HTTP_READ_HEADER_TIMEOUT` | `5s` | Maximum time to read request headers |
+| `HTTP_READ_TIMEOUT` | `15s` | Maximum time to read a request body |
+| `HTTP_WRITE_TIMEOUT` | `15s` | Maximum time to write a response |
+| `HTTP_IDLE_TIMEOUT` | `60s` | Maximum idle keep-alive duration |
 
 ### Database
 
@@ -160,17 +153,6 @@ DSN format per driver:
 | `KAFKA_REQUIRED_ACKS` | `all` | `all` · `leader` · `none` |
 | `KAFKA_ASYNC` | `false` | Fire-and-forget (no delivery guarantee) |
 | `KAFKA_COMPRESSION` | `none` | `none` · `gzip` · `snappy` · `lz4` · `zstd` |
-| `KAFKA_TOPIC` | `raw-events` | analytics domain's ingest topic |
-| `KAFKA_CONSUMER_GROUP` | `analytics-processor` | analytics domain's consumer group |
-
-### Analytics (`internal/analytics` — raw pgxpool, separate from the GORM pool)
-
-| Variable | Default | Description |
-|---|---|---|
-| `ANALYTICS_DB_DSN` | *(see `.env.example`)* | Postgres-only DSN used by `pkg/databases.NewRawPool` |
-| `ANALYTICS_DB_MAX_CONNS` | `10` | Pool size — batch writes are fewer, larger transactions |
-| `BATCH_SIZE` | `500` | Consumer flush trigger (record count) |
-| `BATCH_TIMEOUT` | `200ms` | Consumer flush trigger (max wait) |
 
 ### OpenTelemetry
 
@@ -186,12 +168,11 @@ DSN format per driver:
 |---|---|---|
 | `GET` | `/health` | Liveness check |
 | `GET` | `/swagger/*any` | Swagger UI |
-| `GET` | `/api/v1/products` | List products (paginated `?page=1&page_size=20`, searchable `?search=widget`, sortable `?sort_by=price&sort_dir=desc`, preloadable `?preload=relation`) |
+| `GET` | `/api/v1/products` | List products (paginated `?page=1&page_size=20`, searchable `?search=widget`, sortable `?sort=price:desc`, filterable `?filter=price:gte:10&filter=price:lte:100`, preloadable `?preload=relation`) |
 | `GET` | `/api/v1/products/:id` | Get product by ID |
 | `POST` | `/api/v1/products` | Create product |
 | `PUT` | `/api/v1/products/:id` | Update product |
 | `DELETE` | `/api/v1/products/:id` | Delete product |
-| `POST` | `/api/v1/events` | Ingest an analytics event — returns `202` immediately, publishes to Kafka async |
 
 ## Makefile targets
 
@@ -199,7 +180,6 @@ DSN format per driver:
 make infra-up        # Start Docker infrastructure
 make infra-down      # Stop Docker infrastructure
 make run             # Run the web server (go run)
-make worker          # Run the analytics Kafka consumer (go run)
 make build           # Regenerate Swagger docs then go build ./...
 make swagger         # Regenerate Swagger docs only
 make swagger-install # Install swag CLI

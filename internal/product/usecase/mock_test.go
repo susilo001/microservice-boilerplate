@@ -8,7 +8,8 @@ import (
 
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
 	domainEvent "github.com/boilerplate/microservice-boilerplate/internal/product/domain/event"
-	domainrepo "github.com/boilerplate/microservice-boilerplate/internal/product/domain/repository"
+	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
+	"github.com/boilerplate/microservice-boilerplate/pkg/queryutil"
 )
 
 type mockProductRepository struct {
@@ -44,6 +45,10 @@ func (m *mockProductRepository) FindByID(_ context.Context, id string) (*entity.
 	return p, nil
 }
 
+func (m *mockProductRepository) FindByIDForUpdate(ctx context.Context, id string) (*entity.Product, error) {
+	return m.FindByID(ctx, id)
+}
+
 func (m *mockProductRepository) FindAll(_ context.Context) ([]entity.Product, error) {
 	if m.findErr != nil {
 		return nil, m.findErr
@@ -55,31 +60,91 @@ func (m *mockProductRepository) FindAll(_ context.Context) ([]entity.Product, er
 	return out, nil
 }
 
-func (m *mockProductRepository) FindAllPaginated(_ context.Context, params domainrepo.ListParams) ([]entity.Product, int64, error) {
+func (m *mockProductRepository) FindAllPaginated(_ context.Context, params request.ListProductsRequest) ([]entity.Product, int64, error) {
 	if m.findErr != nil {
 		return nil, 0, m.findErr
 	}
+	query, err := queryutil.BuildListParams(params)
+	if err != nil {
+		return nil, 0, err
+	}
 	all := make([]entity.Product, 0, len(m.products))
 	for _, p := range m.products {
-		if params.Search != "" {
-			s := strings.ToLower(params.Search)
+		if query.Search != "" {
+			s := strings.ToLower(query.Search)
 			if !strings.Contains(strings.ToLower(p.Name), s) && !strings.Contains(strings.ToLower(p.Description), s) {
 				continue
 			}
+		}
+		if !matchesFilters(p, query.Filters) {
+			continue
 		}
 		all = append(all, *p)
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
 	total := int64(len(all))
-	offset, limit := params.Offset, params.Limit
-	if offset >= len(all) {
+	if query.Offset >= len(all) {
 		return []entity.Product{}, total, nil
 	}
-	end := offset + limit
+	end := query.Offset + query.Limit
 	if end > len(all) {
 		end = len(all)
 	}
-	return all[offset:end], total, nil
+	return all[query.Offset:end], total, nil
+}
+
+func matchesFilters(p *entity.Product, filters []queryutil.Filter) bool {
+	for _, filter := range filters {
+		var actual any
+		switch filter.Column {
+		case "name":
+			actual = p.Name
+		case "price":
+			actual = p.Price
+		case "stock":
+			actual = p.Stock
+		default:
+			return false
+		}
+		if !matchesFilter(actual, filter.Op, filter.Value) {
+			return false
+		}
+	}
+	return true
+}
+
+func matchesFilter(actual any, op string, want any) bool {
+	switch value := actual.(type) {
+	case string:
+		needle := want.(string)
+		switch op {
+		case "=":
+			return value == needle
+		case "LIKE":
+			return strings.Contains(value, needle)
+		}
+	case float64:
+		needle := want.(float64)
+		switch op {
+		case "=":
+			return value == needle
+		case ">=":
+			return value >= needle
+		case "<=":
+			return value <= needle
+		}
+	case int:
+		needle := want.(int)
+		switch op {
+		case "=":
+			return value == needle
+		case ">=":
+			return value >= needle
+		case "<=":
+			return value <= needle
+		}
+	}
+	return false
 }
 
 func (m *mockProductRepository) Update(_ context.Context, p *entity.Product) error {

@@ -4,15 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"gorm.io/gorm"
+	"gorm.io/plugin/dbresolver"
 
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
 	domainrepo "github.com/boilerplate/microservice-boilerplate/internal/product/domain/repository"
+	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
+	"github.com/boilerplate/microservice-boilerplate/pkg/queryutil"
 )
 
 var tracer = otel.Tracer("product/repository")
@@ -39,12 +41,22 @@ func (r *productRepository) Create(ctx context.Context, product *entity.Product)
 }
 
 func (r *productRepository) FindByID(ctx context.Context, id string) (*entity.Product, error) {
+	return r.findByID(ctx, id, r.db)
+}
+
+// FindByIDForUpdate reads from the primary so an update never starts from a
+// lagging replica and overwrites newer data.
+func (r *productRepository) FindByIDForUpdate(ctx context.Context, id string) (*entity.Product, error) {
+	return r.findByID(ctx, id, r.db.Clauses(dbresolver.Write))
+}
+
+func (r *productRepository) findByID(ctx context.Context, id string, db *gorm.DB) (*entity.Product, error) {
 	ctx, span := tracer.Start(ctx, "product.repository.FindByID")
 	defer span.End()
 	span.SetAttributes(attribute.String("product.id", id))
 
 	var product entity.Product
-	if err := r.db.WithContext(ctx).First(&product, "id = ?", id).Error; err != nil {
+	if err := db.WithContext(ctx).First(&product, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, entity.ErrProductNotFound
 		}
@@ -69,26 +81,27 @@ func (r *productRepository) FindAll(ctx context.Context) ([]entity.Product, erro
 	return products, nil
 }
 
-func (r *productRepository) FindAllPaginated(ctx context.Context, params domainrepo.ListParams) ([]entity.Product, int64, error) {
+func (r *productRepository) FindAllPaginated(ctx context.Context, params request.ListProductsRequest) ([]entity.Product, int64, error) {
 	ctx, span := tracer.Start(ctx, "product.repository.FindAllPaginated")
 	defer span.End()
 	span.SetAttributes(
-		attribute.Int("offset", params.Offset),
-		attribute.Int("limit", params.Limit),
+		attribute.Int("page", params.Page),
+		attribute.Int("limit", params.PageSize),
 		attribute.String("search", params.Search),
-		attribute.String("sort_by", params.SortBy),
-		attribute.String("sort_dir", params.SortDir),
+		attribute.String("sort", params.Sort),
 	)
 
-	// base query shared by count + find, filters applied once
-	query := r.db.WithContext(ctx).Model(&entity.Product{})
-	if params.Search != "" {
-		// portable substring search across drivers (postgres/mysql/sqlite/sqlserver).
-		// ponytail: swap for Postgres tsvector + GIN index if ranked relevance is
-		// ever needed; LIKE is fine for a boilerplate reference domain.
-		like := "%" + strings.ToLower(params.Search) + "%"
-		query = query.Where("LOWER(name) LIKE ? OR LOWER(description) LIKE ?", like, like)
+	// base query shared by count + find, filters applied once.
+	// ponytail: portable LOWER(col) LIKE search across drivers (postgres/
+	// mysql/sqlite/sqlserver); swap for Postgres tsvector + GIN index if
+	// ranked relevance is ever needed — fine for a boilerplate reference domain.
+	qp, err := queryutil.BuildListParams(params)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, 0, fmt.Errorf("build product list query: %w", err)
 	}
+	query := queryutil.ApplySearchAndFilters(r.db.WithContext(ctx).Model(&entity.Product{}), qp)
 
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -97,16 +110,7 @@ func (r *productRepository) FindAllPaginated(ctx context.Context, params domainr
 		return nil, 0, fmt.Errorf("repository count products: %w", err)
 	}
 
-	findQuery := query.Session(&gorm.Session{}).Offset(params.Offset).Limit(params.Limit)
-	if params.SortBy != "" {
-		// caller (usecase) must have already validated SortBy/SortDir against
-		// a whitelist — raw query-string values must never reach Order().
-		findQuery = findQuery.Order(params.SortBy + " " + params.SortDir)
-	}
-	for _, rel := range params.Preload {
-		// same whitelist contract as SortBy — see usecase.allowedPreloads.
-		findQuery = findQuery.Preload(rel)
-	}
+	findQuery := queryutil.ApplySortPreloadPage(query.Session(&gorm.Session{}), qp)
 
 	var products []entity.Product
 	if err := findQuery.Find(&products).Error; err != nil {

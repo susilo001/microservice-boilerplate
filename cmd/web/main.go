@@ -9,14 +9,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
 	apiroute "github.com/boilerplate/microservice-boilerplate/api/http/v1/route"
 	"github.com/boilerplate/microservice-boilerplate/config"
 	_ "github.com/boilerplate/microservice-boilerplate/docs"
-	analyticshttp "github.com/boilerplate/microservice-boilerplate/internal/analytics/delivery/http"
-	analyticsmessaging "github.com/boilerplate/microservice-boilerplate/internal/analytics/gateway/messaging"
-	analyticsusecase "github.com/boilerplate/microservice-boilerplate/internal/analytics/usecase"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/cache"
 	producthttp "github.com/boilerplate/microservice-boilerplate/internal/product/delivery/http"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
@@ -40,6 +38,7 @@ import (
 // @BasePath        /
 func main() {
 	cfg := config.Load()
+	gin.SetMode(cfg.GinMode)
 
 	logger, err := pkglogger.NewLogger()
 	if err != nil {
@@ -117,19 +116,17 @@ func main() {
 	updateProductUC := usecase.NewUpdateProductUseCase(productRepo, productCache, productPublisher)
 	deleteProductUC := usecase.NewDeleteProductUseCase(productRepo, productCache)
 
-	// infrastructure — analytics domain (ingest path only; no DB pool here,
-	// the raw pgxpool belongs to cmd/worker's consumer, not the web server)
-	analyticsPublisher := analyticsmessaging.NewEventPublisher(kafkaWriter, cfg.Analytics.Topic)
-	publishEventUC := analyticsusecase.NewPublishEventUseCase(analyticsPublisher)
-	ingestHandler := analyticshttp.NewIngestHandler(publishEventUC)
-
 	// delivery
 	handler := producthttp.NewProductHandler(getProductUC, listProductsUC, createProductUC, updateProductUC, deleteProductUC)
-	router := apiroute.NewRouter(handler, ingestHandler, logger, cfg.OTelServiceName)
+	router := apiroute.NewRouter(handler, logger, cfg.OTelServiceName)
 
 	srv := &http.Server{
-		Addr:    ":" + cfg.AppPort,
-		Handler: router,
+		Addr:              ":" + cfg.AppPort,
+		Handler:           router,
+		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
+		ReadTimeout:       cfg.HTTPReadTimeout,
+		WriteTimeout:      cfg.HTTPWriteTimeout,
+		IdleTimeout:       cfg.HTTPIdleTimeout,
 	}
 
 	go func() {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
 	domainrepo "github.com/boilerplate/microservice-boilerplate/internal/product/domain/repository"
+	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/repository"
 	"github.com/boilerplate/microservice-boilerplate/pkg/databases"
 )
@@ -111,7 +112,7 @@ func TestProductRepository_FindAllPaginated(t *testing.T) {
 		}
 	}
 
-	products, total, err := repo.FindAllPaginated(context.Background(), domainrepo.ListParams{Offset: 0, Limit: 2})
+	products, total, err := repo.FindAllPaginated(context.Background(), request.ListProductsRequest{Page: 1, PageSize: 2})
 	if err != nil {
 		t.Fatalf("FindAllPaginated: %v", err)
 	}
@@ -137,12 +138,11 @@ func TestProductRepository_FindAllPaginated_SearchAndSort(t *testing.T) {
 		}
 	}
 
-	products, total, err := repo.FindAllPaginated(context.Background(), domainrepo.ListParams{
-		Offset:  0,
-		Limit:   10,
-		Search:  "widget",
-		SortBy:  "price",
-		SortDir: "asc",
+	products, total, err := repo.FindAllPaginated(context.Background(), request.ListProductsRequest{
+		Page:     1,
+		PageSize: 10,
+		Search:   "widget",
+		Sort:     "price:asc",
 	})
 	if err != nil {
 		t.Fatalf("FindAllPaginated: %v", err)
@@ -152,5 +152,32 @@ func TestProductRepository_FindAllPaginated_SearchAndSort(t *testing.T) {
 	}
 	if len(products) != 2 || products[0].Name != "Aardvark Widget" {
 		t.Errorf("products = %+v, want Aardvark Widget first (sorted by price asc)", products)
+	}
+}
+
+func TestProductRepository_FindAllPaginated_Filter(t *testing.T) {
+	repo := setup(t)
+
+	seeds := []entity.Product{
+		{ID: "test-filter-1", Name: "Cheap", Price: 5, Stock: 1},
+		{ID: "test-filter-2", Name: "Mid", Price: 15, Stock: 5},
+		{ID: "test-filter-3", Name: "Pricey", Price: 50, Stock: 100},
+	}
+	for i := range seeds {
+		if err := repo.Create(context.Background(), &seeds[i]); err != nil {
+			t.Fatalf("seed Create: %v", err)
+		}
+	}
+
+	products, total, err := repo.FindAllPaginated(context.Background(), request.ListProductsRequest{
+		Page:     1,
+		PageSize: 10,
+		Filters:  []string{"price:gte:10", "price:lte:20"},
+	})
+	if err != nil {
+		t.Fatalf("FindAllPaginated: %v", err)
+	}
+	if total != 1 || len(products) != 1 || products[0].Name != "Mid" {
+		t.Errorf("products = %+v, total = %d, want 1 product named Mid", products, total)
 	}
 }

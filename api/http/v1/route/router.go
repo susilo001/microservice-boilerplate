@@ -11,12 +11,12 @@ import (
 	"go.uber.org/zap"
 
 	apimw "github.com/boilerplate/microservice-boilerplate/api/http/v1/middleware"
-	analyticshttp "github.com/boilerplate/microservice-boilerplate/internal/analytics/delivery/http"
 	producthttp "github.com/boilerplate/microservice-boilerplate/internal/product/delivery/http"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
+	"github.com/boilerplate/microservice-boilerplate/pkg/queryutil"
 )
 
-func NewRouter(handler *producthttp.ProductHandler, ingestHandler *analyticshttp.IngestHandler, log *zap.Logger, serviceName string) *gin.Engine {
+func NewRouter(handler *producthttp.ProductHandler, log *zap.Logger, serviceName string) *gin.Engine {
 	r := gin.New()
 	r.Use(apimw.RequestTimer())
 	r.Use(apimw.CorrelationID())
@@ -27,7 +27,7 @@ func NewRouter(handler *producthttp.ProductHandler, ingestHandler *analyticshttp
 		if errors.Is(err, entity.ErrProductNotFound) {
 			return http.StatusNotFound
 		}
-		if errors.Is(err, entity.ErrInvalidSortField) || errors.Is(err, entity.ErrInvalidPreload) {
+		if errors.Is(err, entity.ErrInvalidSortField) || errors.Is(err, entity.ErrInvalidPreload) || errors.Is(err, queryutil.ErrInvalidQuery) {
 			return http.StatusBadRequest
 		}
 		return http.StatusInternalServerError
@@ -49,8 +49,6 @@ func NewRouter(handler *producthttp.ProductHandler, ingestHandler *analyticshttp
 			products.PUT("/:id", handler.Update)
 			products.DELETE("/:id", handler.Delete)
 		}
-
-		v1.POST("/events", ingestHandler.Ingest)
 	}
 
 	return r

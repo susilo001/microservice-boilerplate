@@ -8,6 +8,7 @@ import (
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/usecase"
+	"github.com/boilerplate/microservice-boilerplate/pkg/queryutil"
 )
 
 func TestListProductsUseCase_Execute(t *testing.T) {
@@ -21,76 +22,53 @@ func TestListProductsUseCase_Execute(t *testing.T) {
 	}{
 		{
 			name:      "returns empty slice when no products",
-			seed:      nil,
 			req:       request.ListProductsRequest{Page: 1, PageSize: 20},
 			wantCount: 0,
 			wantTotal: 0,
 		},
 		{
-			name: "returns all products on first page",
+			name: "filters by generic price range",
 			seed: []*entity.Product{
-				{ID: "1", Name: "Alpha", Price: 1.00},
-				{ID: "2", Name: "Beta", Price: 2.00},
-				{ID: "3", Name: "Gamma", Price: 3.00},
+				{ID: "1", Name: "Cheap", Price: 5},
+				{ID: "2", Name: "Mid", Price: 15},
+				{ID: "3", Name: "Pricey", Price: 50},
 			},
-			req:       request.ListProductsRequest{Page: 1, PageSize: 20},
-			wantCount: 3,
-			wantTotal: 3,
-		},
-		{
-			name: "respects page size",
-			seed: []*entity.Product{
-				{ID: "1", Name: "Alpha", Price: 1.00},
-				{ID: "2", Name: "Beta", Price: 2.00},
-				{ID: "3", Name: "Gamma", Price: 3.00},
-			},
-			req:       request.ListProductsRequest{Page: 1, PageSize: 2},
-			wantCount: 2,
-			wantTotal: 3,
-		},
-		{
-			name: "filters by search",
-			seed: []*entity.Product{
-				{ID: "1", Name: "Alpha Widget", Price: 1.00},
-				{ID: "2", Name: "Beta Gadget", Price: 2.00},
-			},
-			req:       request.ListProductsRequest{Page: 1, PageSize: 20, Search: "widget"},
+			req:       request.ListProductsRequest{Page: 1, PageSize: 20, Filters: []string{"price:gte:10", "price:lte:20"}},
 			wantCount: 1,
 			wantTotal: 1,
 		},
 		{
-			name: "accepts whitelisted sort field",
+			name: "filters by generic stock range",
 			seed: []*entity.Product{
-				{ID: "1", Name: "Alpha", Price: 1.00},
+				{ID: "1", Name: "A", Stock: 0},
+				{ID: "2", Name: "B", Stock: 5},
+				{ID: "3", Name: "C", Stock: 100},
 			},
-			req:       request.ListProductsRequest{Page: 1, PageSize: 20, SortBy: "price", SortDir: "desc"},
+			req:       request.ListProductsRequest{Page: 1, PageSize: 20, Filters: []string{"stock:gte:1", "stock:lte:10"}},
 			wantCount: 1,
 			wantTotal: 1,
 		},
 		{
-			name:    "rejects non-whitelisted sort field",
-			seed:    []*entity.Product{{ID: "1", Name: "Alpha", Price: 1.00}},
-			req:     request.ListProductsRequest{Page: 1, PageSize: 20, SortBy: "id; DROP TABLE products"},
-			wantErr: entity.ErrInvalidSortField,
+			name:    "rejects invalid sort field",
+			seed:    []*entity.Product{{ID: "1", Name: "Alpha"}},
+			req:     request.ListProductsRequest{Page: 1, PageSize: 20, Sort: "id; DROP TABLE products:asc"},
+			wantErr: queryutil.ErrInvalidQuery,
 		},
 		{
-			name:    "rejects non-whitelisted preload",
-			seed:    []*entity.Product{{ID: "1", Name: "Alpha", Price: 1.00}},
-			req:     request.ListProductsRequest{Page: 1, PageSize: 20, Preload: []string{"NotARelation"}},
-			wantErr: entity.ErrInvalidPreload,
+			name:    "rejects invalid filter field",
+			seed:    []*entity.Product{{ID: "1", Name: "Alpha"}},
+			req:     request.ListProductsRequest{Page: 1, PageSize: 20, Filters: []string{"id:eq:1"}},
+			wantErr: queryutil.ErrInvalidQuery,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newMockRepo()
-			for _, p := range tt.seed {
-				repo.products[p.ID] = p
+			for _, product := range tt.seed {
+				repo.products[product.ID] = product
 			}
-			uc := usecase.NewListProductsUseCase(repo)
-
-			res, total, err := uc.Execute(context.Background(), tt.req)
-
+			res, total, err := usecase.NewListProductsUseCase(repo).Execute(context.Background(), tt.req)
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
 					t.Fatalf("Execute() error = %v, want %v", err, tt.wantErr)
@@ -100,11 +78,8 @@ func TestListProductsUseCase_Execute(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Execute() unexpected error = %v", err)
 			}
-			if len(res) != tt.wantCount {
-				t.Errorf("got %d products, want %d", len(res), tt.wantCount)
-			}
-			if total != tt.wantTotal {
-				t.Errorf("got total %d, want %d", total, tt.wantTotal)
+			if len(res) != tt.wantCount || total != tt.wantTotal {
+				t.Errorf("got count=%d total=%d, want count=%d total=%d", len(res), total, tt.wantCount, tt.wantTotal)
 			}
 		})
 	}

@@ -51,21 +51,6 @@ func NewWriter(cfg WriterConfig) *kafka.Writer {
 	}
 }
 
-// ReaderConfig holds Kafka consumer group settings.
-type ReaderConfig struct {
-	Brokers []string
-	Topic   string
-	GroupID string
-}
-
-func NewReader(cfg ReaderConfig) *kafka.Reader {
-	return kafka.NewReader(kafka.ReaderConfig{
-		Brokers: cfg.Brokers,
-		Topic:   cfg.Topic,
-		GroupID: cfg.GroupID,
-	})
-}
-
 func parseRequiredAcks(s string) kafka.RequiredAcks {
 	switch strings.ToLower(s) {
 	case "leader":

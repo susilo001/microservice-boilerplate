@@ -39,7 +39,7 @@ func (uc *updateProductUseCase) Execute(ctx context.Context, id string, req requ
 	defer span.End()
 	span.SetAttributes(attribute.String("product.id", id))
 
-	product, err := uc.repo.FindByID(ctx, id)
+	product, err := uc.repo.FindByIDForUpdate(ctx, id)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())

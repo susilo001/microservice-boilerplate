@@ -134,6 +134,7 @@ microservice-boilerplate/
     ├── logger/logger.go
     ├── crypto/crypto.go
     ├── http/client.go
+    ├── queryutil/                      # Shared GORM list query + Gin query-param helpers
     └── utils/
 ```
 
@@ -204,6 +205,8 @@ RequestTimer → CorrelationID → otelgin → TraceContext → Logger → Error
 - Domain-agnostic, process-wide infrastructure — no imports from `internal/`
 - `databases/db.go` (GORM) and `databases/rawdb.go` (pgxpool) coexist
   deliberately — see the exception below for which domains use which.
+- `queryutil/` owns generic GORM list-query building and Gin list-query
+  parsing — it may import GORM/Gin but no domain package.
 
 ### `cmd/`
 - Thin wiring only: load config → init OTel → connect infra → build use
@@ -413,20 +416,30 @@ type Event interface {
 - `*gorm.DB` never leaves `internal/product/repository/`
 - `*pgxpool.Pool` never leaves `internal/analytics/repository/`
 
-### List endpoints (search / sort / preload)
+### List endpoints (search / sort / filter / preload)
 - Convention established by `internal/product`'s `GET /api/v1/products` —
   follow this shape for any new CRUD domain's list endpoint.
-- Query params: `search` (substring match), `sort_by` + `sort_dir`
-  (`asc`/`desc`), `preload` (comma-separated relation names).
-- **`sort_by` and `preload` values must be validated against a fixed
-  allow-list in the usecase layer before being passed to the repository.**
-  GORM's `Order()` and `Preload()` do not parameterize/escape arbitrary
-  input the way `Where()` placeholders do — passing a raw query-string
-  value straight into `Order()` is a SQL-injection-shaped bug even though
-  it goes through GORM. See `internal/product/usecase/list_products.go`'s
-  `allowedSortFields` / `allowedPreloads` maps. Unrecognized values return
-  a domain sentinel error (`ErrInvalidSortField` / `ErrInvalidPreload`)
-  mapped to HTTP `400`, never silently ignored or passed through.
+- Query params: `search` (substring match), repeated
+  `filter=field:operator:value` (e.g. `filter=price:gte:10`),
+  `sort=field:direction` (e.g. `sort=price:desc`), `preload`
+  (comma-separated relation names).
+- **Shared query-building lives in `pkg/queryutil`** — don't hand-roll
+  `Where()`/`Order()`/`Preload()`/`Offset()`/`Limit()` chains per domain.
+  Define one tagged request struct, parse it in handlers with
+  `queryutil.Bind`, call `queryutil.BuildListParams` in usecase to reject
+  malformed query syntax, then pass same request to repository.
+  Repository calls `BuildListParams`, `ApplySearchAndFilters`, and
+  `ApplySortPreloadPage`. See product's `ListProductsRequest` for reference.
+- Tags form fixed allow-lists for SQL identifiers and value types:
+  `search:"name,description"`, `sort:"name,price"`,
+  `preload:"Category"`, and
+  `filter:"price:float64:eq|gte|lte,stock:int:eq|gte|lte"`. Never infer
+  columns/relations from entities or raw URL values. GORM does not
+  parameterize `ORDER BY`/`Preload` identifiers.
+- Filter values use GORM `?` placeholders. Only columns and SQL operators
+  from compile-time tags reach SQL. Invalid filter field/operator/value,
+  sort field/direction, or preload returns `400` via
+  `queryutil.ErrInvalidQuery`; never silently ignore malformed syntax.
 - Search is a portable `LOWER(col) LIKE ?` across all four GORM drivers —
   not driver-specific full-text search (`tsvector`, `FULLTEXT`, FTS5,
   `CONTAINS`). This is a deliberate simplification (`ponytail:` comment in
