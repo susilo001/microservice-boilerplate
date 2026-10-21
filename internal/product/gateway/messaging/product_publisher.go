@@ -3,7 +3,9 @@ package messaging
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel"
@@ -18,15 +20,19 @@ import (
 )
 
 type productPublisher struct {
-	writer       *kafka.Writer
+	writer       messageWriter
 	tracer       trace.Tracer
 	errorCounter metric.Int64Counter
 }
 
-func NewProductPublisher(writer *kafka.Writer) event.Publisher {
+type messageWriter interface {
+	WriteMessages(context.Context, ...kafka.Message) error
+}
+
+func NewProductPublisher(writer messageWriter) event.Publisher {
 	errorCounter, _ := otel.Meter("product-service/kafka").Int64Counter(
 		"product.kafka.publish.errors",
-		metric.WithDescription("Number of failed product Kafka publish attempts"),
+		metric.WithDescription("Number of failed product publish operations after retries"),
 	)
 	return &productPublisher{
 		writer:       writer,
@@ -36,6 +42,8 @@ func NewProductPublisher(writer *kafka.Writer) event.Publisher {
 }
 
 func (p *productPublisher) Publish(ctx context.Context, e event.Event) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	ctx, span := p.tracer.Start(ctx, "kafka.publish."+e.EventName())
 	defer span.End()
 
@@ -55,8 +63,13 @@ func (p *productPublisher) Publish(ctx context.Context, e event.Event) error {
 		Value:   payload,
 		Headers: []kafka.Header(headers),
 	}
+	if aggregate, ok := e.(interface{ AggregateID() string }); ok {
+		msg.Key = []byte(aggregate.AggregateID())
+	}
 
-	if err := retry.Do(ctx, retry.DefaultConfig(), func() error {
+	policy := retry.DefaultConfig()
+	policy.Retryable = retryableKafkaError
+	if err := retry.Do(ctx, policy, func() error {
 		return p.writer.WriteMessages(ctx, msg)
 	}); err != nil {
 		p.recordError(ctx, e.EventName(), "write")
@@ -65,6 +78,27 @@ func (p *productPublisher) Publish(ctx context.Context, e event.Event) error {
 		return fmt.Errorf("publish event %s: %w", e.EventName(), err)
 	}
 	return nil
+}
+
+func retryableKafkaError(err error) bool {
+	var writeErrors kafka.WriteErrors
+	if errors.As(err, &writeErrors) {
+		failed := false
+		for _, writeErr := range writeErrors {
+			if writeErr != nil {
+				failed = true
+				if !retryableKafkaError(writeErr) {
+					return false
+				}
+			}
+		}
+		return failed
+	}
+	var kafkaError kafka.Error
+	if errors.As(err, &kafkaError) {
+		return kafkaError.Temporary()
+	}
+	return retry.IsTransient(err)
 }
 
 func (p *productPublisher) recordError(ctx context.Context, eventName, stage string) {

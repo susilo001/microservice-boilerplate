@@ -16,7 +16,6 @@ type Config struct {
 	// Connection pool
 	PoolSize     int // default: 10 — max number of socket connections
 	MinIdleConns int // default: 5  — minimum idle connections kept in pool
-	MaxRetries   int // default: 3  — max retries on transient errors
 
 	// Timeouts
 	DialTimeout  time.Duration // default: 5s
@@ -33,10 +32,6 @@ func NewClient(cfg Config) *redis.Client {
 	if minIdle == 0 {
 		minIdle = 5
 	}
-	maxRetries := cfg.MaxRetries
-	if maxRetries == 0 {
-		maxRetries = 3
-	}
 	dialTimeout := cfg.DialTimeout
 	if dialTimeout == 0 {
 		dialTimeout = 5 * time.Second
@@ -51,14 +46,15 @@ func NewClient(cfg Config) *redis.Client {
 	}
 
 	return redis.NewClient(&redis.Options{
-		Addr:         cfg.Addr,
-		Password:     cfg.Password,
-		DB:           cfg.DB,
-		PoolSize:     poolSize,
-		MinIdleConns: minIdle,
-		MaxRetries:   maxRetries,
-		DialTimeout:  dialTimeout,
-		ReadTimeout:  readTimeout,
-		WriteTimeout: writeTimeout,
+		Addr:                  cfg.Addr,
+		Password:              cfg.Password,
+		DB:                    cfg.DB,
+		PoolSize:              poolSize,
+		MinIdleConns:          minIdle,
+		MaxRetries:            -1,
+		ContextTimeoutEnabled: true,
+		DialTimeout:           dialTimeout,
+		ReadTimeout:           readTimeout,
+		WriteTimeout:          writeTimeout,
 	})
 }

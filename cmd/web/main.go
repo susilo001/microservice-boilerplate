@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"gorm.io/plugin/dbresolver"
 
 	apiroute "github.com/boilerplate/microservice-boilerplate/api/http/v1/route"
 	"github.com/boilerplate/microservice-boilerplate/config"
@@ -37,13 +39,22 @@ import (
 // @host            localhost:8003
 // @BasePath        /
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
 	gin.SetMode(cfg.GinMode)
 
 	logger, err := pkglogger.NewLogger()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "init logger: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("init logger: %w", err)
 	}
 	defer logger.Sync() //nolint:errcheck
 
@@ -53,7 +64,7 @@ func main() {
 	// telemetry — must shut down last
 	otelShutdown, err := telemetry.InitProvider(ctx, cfg.OTelServiceName)
 	if err != nil {
-		logger.Fatal("init otel", zap.Error(err))
+		return fmt.Errorf("init otel: %w", err)
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -74,10 +85,17 @@ func main() {
 		ConnMaxIdleTime: cfg.DB.ConnMaxIdleTime,
 	})
 	if err != nil {
-		logger.Fatal("init db", zap.Error(err))
+		return fmt.Errorf("init db: %w", err)
 	}
-	if err := db.AutoMigrate(&entity.Product{}); err != nil {
-		logger.Fatal("auto migrate", zap.Error(err))
+	defer func() {
+		if err := databases.Close(db); err != nil {
+			logger.Error("close database pools", zap.Error(err))
+		}
+	}()
+	if cfg.DBAutoMigrate {
+		if err := db.AutoMigrate(&entity.Product{}); err != nil {
+			return fmt.Errorf("auto migrate: %w", err)
+		}
 	}
 
 	// redis
@@ -87,11 +105,15 @@ func main() {
 		DB:           cfg.Redis.DB,
 		PoolSize:     cfg.Redis.PoolSize,
 		MinIdleConns: cfg.Redis.MinIdleConns,
-		MaxRetries:   cfg.Redis.MaxRetries,
 		DialTimeout:  cfg.Redis.DialTimeout,
 		ReadTimeout:  cfg.Redis.ReadTimeout,
 		WriteTimeout: cfg.Redis.WriteTimeout,
 	})
+	defer func() {
+		if err := rdb.Close(); err != nil {
+			logger.Error("close redis", zap.Error(err))
+		}
+	}()
 
 	// kafka
 	kafkaWriter := pkgkafka.NewWriter(pkgkafka.WriterConfig{
@@ -102,7 +124,11 @@ func main() {
 		Async:        cfg.Kafka.Async,
 		Compression:  cfg.Kafka.Compression,
 	})
-	defer kafkaWriter.Close()
+	defer func() {
+		if err := kafkaWriter.Close(); err != nil {
+			logger.Error("close Kafka writer", zap.Error(err))
+		}
+	}()
 
 	// infrastructure — product domain
 	productRepo := repository.NewProductRepository(db)
@@ -118,7 +144,13 @@ func main() {
 
 	// delivery
 	handler := producthttp.NewProductHandler(getProductUC, listProductsUC, createProductUC, updateProductUC, deleteProductUC)
-	router := apiroute.NewRouter(handler, logger, cfg.OTelServiceName)
+	router := apiroute.NewRouter(handler, logger, cfg.OTelServiceName, apiroute.Options{
+		RequestTimeout: cfg.HTTPRequestTimeout,
+		Ready: func(ctx context.Context) error {
+			return db.WithContext(ctx).Clauses(dbresolver.Write).
+				Exec("SELECT id, version FROM products WHERE 1 = 0").Error
+		},
+	})
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.AppPort,
@@ -129,19 +161,26 @@ func main() {
 		IdleTimeout:       cfg.HTTPIdleTimeout,
 	}
 
+	serverErrors := make(chan error, 1)
 	go func() {
 		logger.Info("server starting", zap.String("port", cfg.AppPort))
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatal("server error", zap.Error(err))
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErrors <- err
 		}
 	}()
 
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case err := <-serverErrors:
+		return fmt.Errorf("serve HTTP: %w", err)
+	}
 	logger.Info("shutting down")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Error("server shutdown", zap.Error(err))
+		_ = srv.Close()
+		return fmt.Errorf("server shutdown: %w", err)
 	}
+	return nil
 }

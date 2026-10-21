@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -28,6 +29,8 @@ func NewProductRepository(db *gorm.DB) domainrepo.ProductRepository {
 }
 
 func (r *productRepository) Create(ctx context.Context, product *entity.Product) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	ctx, span := tracer.Start(ctx, "product.repository.Create")
 	defer span.End()
 
@@ -41,7 +44,7 @@ func (r *productRepository) Create(ctx context.Context, product *entity.Product)
 }
 
 func (r *productRepository) FindByID(ctx context.Context, id string) (*entity.Product, error) {
-	return r.findByID(ctx, id, r.db)
+	return r.findByID(ctx, id, r.db.Clauses(dbresolver.Write))
 }
 
 // FindByIDForUpdate reads from the primary so an update never starts from a
@@ -51,6 +54,8 @@ func (r *productRepository) FindByIDForUpdate(ctx context.Context, id string) (*
 }
 
 func (r *productRepository) findByID(ctx context.Context, id string, db *gorm.DB) (*entity.Product, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	ctx, span := tracer.Start(ctx, "product.repository.FindByID")
 	defer span.End()
 	span.SetAttributes(attribute.String("product.id", id))
@@ -68,6 +73,8 @@ func (r *productRepository) findByID(ctx context.Context, id string, db *gorm.DB
 }
 
 func (r *productRepository) FindAll(ctx context.Context) ([]entity.Product, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	ctx, span := tracer.Start(ctx, "product.repository.FindAll")
 	defer span.End()
 
@@ -82,6 +89,8 @@ func (r *productRepository) FindAll(ctx context.Context) ([]entity.Product, erro
 }
 
 func (r *productRepository) FindAllPaginated(ctx context.Context, params request.ListProductsRequest) ([]entity.Product, int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	ctx, span := tracer.Start(ctx, "product.repository.FindAllPaginated")
 	defer span.End()
 	span.SetAttributes(
@@ -123,19 +132,46 @@ func (r *productRepository) FindAllPaginated(ctx context.Context, params request
 }
 
 func (r *productRepository) Update(ctx context.Context, product *entity.Product) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	ctx, span := tracer.Start(ctx, "product.repository.Update")
 	defer span.End()
 	span.SetAttributes(attribute.String("product.id", product.ID))
 
-	if err := r.db.WithContext(ctx).Save(product).Error; err != nil {
+	updatedAt := time.Now().UTC()
+	result := r.db.WithContext(ctx).Model(&entity.Product{}).
+		Where("id = ? AND version = ?", product.ID, product.Version).
+		Updates(map[string]any{
+			"name": product.Name, "description": product.Description,
+			"price": product.Price, "stock": product.Stock,
+			"version": gorm.Expr("version + 1"), "updated_at": updatedAt,
+		})
+	if err := result.Error; err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("repository update product: %w", err)
 	}
+	if result.RowsAffected == 0 {
+		var count int64
+		if err := r.db.WithContext(ctx).Clauses(dbresolver.Write).Model(&entity.Product{}).
+			Where("id = ?", product.ID).Count(&count).Error; err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return fmt.Errorf("check product after update: %w", err)
+		}
+		if count == 0 {
+			return entity.ErrProductNotFound
+		}
+		return entity.ErrProductConflict
+	}
+	product.Version++
+	product.UpdatedAt = updatedAt
 	return nil
 }
 
 func (r *productRepository) Delete(ctx context.Context, id string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	ctx, span := tracer.Start(ctx, "product.repository.Delete")
 	defer span.End()
 	span.SetAttributes(attribute.String("product.id", id))

@@ -11,6 +11,7 @@ import (
 
 	apiresp "github.com/boilerplate/microservice-boilerplate/api/http/v1/response"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
+	_ "github.com/boilerplate/microservice-boilerplate/internal/product/domain/response"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/usecase"
 	"github.com/boilerplate/microservice-boilerplate/pkg/queryutil"
 )
@@ -49,8 +50,8 @@ func NewProductHandler(
 // @Produce      json
 // @Param        id   path      string  true  "Product UUID"
 // @Success      200  {object}  apiresp.APIResponse[response.ProductResponse]
-// @Failure      404  {object}  apiresp.APIResponse[struct{}]
-// @Failure      500  {object}  apiresp.APIResponse[struct{}]
+// @Failure      404  {object}  apiresp.APIResponse[apiresp.Empty]
+// @Failure      500  {object}  apiresp.APIResponse[apiresp.Empty]
 // @Router       /api/v1/products/{id} [get]
 func (h *ProductHandler) GetByID(c *gin.Context) {
 	ctx, span := tracer.Start(c.Request.Context(), "product.handler.GetByID")
@@ -83,8 +84,8 @@ func (h *ProductHandler) GetByID(c *gin.Context) {
 // @Param        sort       query     string  false  "Sort: name:asc, price:desc, stock:asc, created_at:desc, updated_at:desc"
 // @Param        preload    query     string  false  "Comma-separated relations to eager-load"
 // @Success      200  {object}  apiresp.APIResponse[apiresp.ListData[response.ProductResponse]]
-// @Failure      400  {object}  apiresp.APIResponse[struct{}]
-// @Failure      500  {object}  apiresp.APIResponse[struct{}]
+// @Failure      400  {object}  apiresp.APIResponse[apiresp.Empty]
+// @Failure      500  {object}  apiresp.APIResponse[apiresp.Empty]
 // @Router       /api/v1/products [get]
 func (h *ProductHandler) List(c *gin.Context) {
 	ctx, span := tracer.Start(c.Request.Context(), "product.handler.List")
@@ -129,8 +130,8 @@ func (h *ProductHandler) List(c *gin.Context) {
 // @Produce      json
 // @Param        body  body      request.CreateProductRequest  true  "Product payload"
 // @Success      201   {object}  apiresp.APIResponse[response.ProductResponse]
-// @Failure      400   {object}  apiresp.APIResponse[struct{}]
-// @Failure      500   {object}  apiresp.APIResponse[struct{}]
+// @Failure      400   {object}  apiresp.APIResponse[apiresp.Empty]
+// @Failure      500   {object}  apiresp.APIResponse[apiresp.Empty]
 // @Router       /api/v1/products [post]
 func (h *ProductHandler) Create(c *gin.Context) {
 	ctx, span := tracer.Start(c.Request.Context(), "product.handler.Create")
@@ -168,9 +169,10 @@ func (h *ProductHandler) Create(c *gin.Context) {
 // @Param        id    path      string                        true  "Product UUID"
 // @Param        body  body      request.UpdateProductRequest  true  "Product payload"
 // @Success      200   {object}  apiresp.APIResponse[response.ProductResponse]
-// @Failure      400   {object}  apiresp.APIResponse[struct{}]
-// @Failure      404   {object}  apiresp.APIResponse[struct{}]
-// @Failure      500   {object}  apiresp.APIResponse[struct{}]
+// @Failure      400   {object}  apiresp.APIResponse[apiresp.Empty]
+// @Failure      404   {object}  apiresp.APIResponse[apiresp.Empty]
+// @Failure      409   {object}  apiresp.APIResponse[apiresp.Empty]
+// @Failure      500   {object}  apiresp.APIResponse[apiresp.Empty]
 // @Router       /api/v1/products/{id} [put]
 func (h *ProductHandler) Update(c *gin.Context) {
 	ctx, span := tracer.Start(c.Request.Context(), "product.handler.Update")
@@ -205,9 +207,9 @@ func (h *ProductHandler) Update(c *gin.Context) {
 // @Tags         products
 // @Produce      json
 // @Param        id  path      string  true  "Product UUID"
-// @Success      204 {object}  apiresp.APIResponse[struct{}]
-// @Failure      404 {object}  apiresp.APIResponse[struct{}]
-// @Failure      500 {object}  apiresp.APIResponse[struct{}]
+// @Success      204 {object}  apiresp.APIResponse[apiresp.Empty]
+// @Failure      404 {object}  apiresp.APIResponse[apiresp.Empty]
+// @Failure      500 {object}  apiresp.APIResponse[apiresp.Empty]
 // @Router       /api/v1/products/{id} [delete]
 func (h *ProductHandler) Delete(c *gin.Context) {
 	ctx, span := tracer.Start(c.Request.Context(), "product.handler.Delete")

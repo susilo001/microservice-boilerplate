@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: productdb_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_DSN: postgres://postgres:postgres@localhost:5432/productdb_test?sslmode=disable
+      REDIS_ADDR: localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go vet ./...
+      - run: psql "$DB_DSN" -v ON_ERROR_STOP=1 -1 -f migrations/postgres/001_products.sql -f migrations/postgres/002_product_version.sql
+      - run: go test -race -count=1 ./...
+      - run: go build ./...
+      - run: go run github.com/swaggo/swag/cmd/swag@v1.16.4 init --generalInfo cmd/web/main.go --output ./docs --parseDependency --parseInternal
+      - run: git diff --exit-code -- docs

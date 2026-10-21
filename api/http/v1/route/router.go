@@ -1,8 +1,10 @@
 package route
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -11,21 +13,39 @@ import (
 	"go.uber.org/zap"
 
 	apimw "github.com/boilerplate/microservice-boilerplate/api/http/v1/middleware"
+	apiresp "github.com/boilerplate/microservice-boilerplate/api/http/v1/response"
 	producthttp "github.com/boilerplate/microservice-boilerplate/internal/product/delivery/http"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
 	"github.com/boilerplate/microservice-boilerplate/pkg/queryutil"
 )
 
-func NewRouter(handler *producthttp.ProductHandler, log *zap.Logger, serviceName string) *gin.Engine {
+type Options struct {
+	RequestTimeout time.Duration
+	Ready          func(context.Context) error
+}
+
+func NewRouter(handler *producthttp.ProductHandler, log *zap.Logger, serviceName string, options Options) *gin.Engine {
 	r := gin.New()
 	r.Use(apimw.RequestTimer())
 	r.Use(apimw.CorrelationID())
 	r.Use(otelgin.Middleware(serviceName))
 	r.Use(apimw.TraceContext())
 	r.Use(apimw.Logger(log))
+	r.Use(gin.CustomRecovery(func(c *gin.Context, recovered any) {
+		log.Error("request panic", zap.Any("panic", recovered), zap.String("correlationid", c.GetString("correlationid")))
+		c.AbortWithStatusJSON(http.StatusInternalServerError, apiresp.NewError(
+			c.GetString("correlationid"), apiresp.ContextTime(c, "tin"), time.Now(), "Internal Server Error"))
+	}))
+	r.Use(apimw.Deadline(options.RequestTimeout))
 	r.Use(apimw.ErrorHandler(func(err error) int {
 		if errors.Is(err, entity.ErrProductNotFound) {
 			return http.StatusNotFound
+		}
+		if errors.Is(err, entity.ErrProductConflict) {
+			return http.StatusConflict
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return http.StatusGatewayTimeout
 		}
 		if errors.Is(err, entity.ErrInvalidSortField) || errors.Is(err, entity.ErrInvalidPreload) || errors.Is(err, queryutil.ErrInvalidQuery) {
 			return http.StatusBadRequest
@@ -37,6 +57,20 @@ func NewRouter(handler *producthttp.ProductHandler, log *zap.Logger, serviceName
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+	r.GET("/ready", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), time.Second)
+		defer cancel()
+		if options.Ready == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready"})
+			return
+		}
+		if err := options.Ready(ctx); err != nil {
+			log.Warn("readiness check failed", zap.Error(err))
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 	})
 
 	v1 := r.Group("/api/v1")

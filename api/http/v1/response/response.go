@@ -13,6 +13,8 @@ type APIResponse[T any] struct {
 	Data          T         `json:"data"`
 }
 
+type Empty struct{}
+
 type ListData[T any] struct {
 	List       []T       `json:"list"`
 	TotalItems int64     `json:"total_items"`
@@ -33,13 +35,13 @@ func NewSuccess[T any](correlationID string, tin, tout time.Time, data T) APIRes
 	}
 }
 
-func NewError(correlationID string, tin, tout time.Time, errMsg string) APIResponse[struct{}] {
-	return APIResponse[struct{}]{
+func NewError(correlationID string, tin, tout time.Time, errMsg string) APIResponse[Empty] {
+	return APIResponse[Empty]{
 		CorrelationID: correlationID,
 		Error:         errMsg,
 		Tin:           tin,
 		Tout:          tout,
-		Data:          struct{}{},
+		Data:          Empty{},
 	}
 }
 

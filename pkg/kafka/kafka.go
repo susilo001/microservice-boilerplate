@@ -22,8 +22,7 @@ type WriterConfig struct {
 	// "none"   → RequireNone (fire-and-forget)
 	RequiredAcks string
 
-	// Async disables the writer's internal flushing loop; callers must call
-	// WriteMessages themselves. Set true only when you manage flushing explicitly.
+	// Async returns before delivery; Completion must handle delivery failures.
 	Async bool
 
 	// Compression algorithm: "none" (default), "gzip", "snappy", "lz4", "zstd"
@@ -42,7 +41,10 @@ func NewWriter(cfg WriterConfig) *kafka.Writer {
 
 	return &kafka.Writer{
 		Addr:         kafka.TCP(cfg.Brokers...),
-		Balancer:     &kafka.LeastBytes{},
+		Balancer:     &kafka.Hash{},
+		MaxAttempts:  1,
+		ReadTimeout:  time.Second,
+		WriteTimeout: time.Second,
 		BatchSize:    batchSize,
 		BatchTimeout: batchTimeout,
 		RequiredAcks: parseRequiredAcks(cfg.RequiredAcks),

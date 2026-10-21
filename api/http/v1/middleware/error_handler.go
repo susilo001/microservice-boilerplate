@@ -27,6 +27,13 @@ func ErrorHandler(statusFor func(error) int) gin.HandlerFunc {
 		if statusFor != nil {
 			status = statusFor(err)
 		}
-		c.JSON(status, apiresp.NewError(correlationID, tin, tout, err.Error()))
+		if c.Writer.Written() {
+			return
+		}
+		message := err.Error()
+		if status >= http.StatusInternalServerError {
+			message = http.StatusText(status)
+		}
+		c.JSON(status, apiresp.NewError(correlationID, tin, tout, message))
 	}
 }

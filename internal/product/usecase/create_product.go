@@ -52,12 +52,15 @@ func (uc *createProductUseCase) Execute(ctx context.Context, req request.CreateP
 	span.SetAttributes(attribute.String("product.id", product.ID))
 
 	evt := event.ProductCreatedEvent{
-		ProductID:   product.ID,
-		Name:        product.Name,
-		Description: product.Description,
-		Price:       product.Price,
-		Stock:       product.Stock,
-		CreatedAt:   product.CreatedAt,
+		EventID:       uuid.NewString(),
+		SchemaVersion: 1,
+		Version:       product.Version,
+		ProductID:     product.ID,
+		Name:          product.Name,
+		Description:   product.Description,
+		Price:         product.Price,
+		Stock:         product.Stock,
+		CreatedAt:     product.CreatedAt,
 	}
 	// non-fatal: publish failure does not roll back the create
 	_ = uc.publisher.Publish(ctx, evt)

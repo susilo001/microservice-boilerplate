@@ -2,7 +2,7 @@
 FROM golang:1.23-alpine AS builder
 
 # swag is needed to regenerate Swagger docs from source annotations.
-RUN go install github.com/swaggo/swag/cmd/swag@latest
+RUN go install github.com/swaggo/swag/cmd/swag@v1.16.4
 
 WORKDIR /app
 

@@ -169,11 +169,11 @@ func (m *mockProductRepository) Delete(_ context.Context, id string) error {
 
 type mockProductCache struct{}
 
-func (m *mockProductCache) Get(_ context.Context, _ string) (*entity.Product, error) {
-	return nil, nil
+func (m *mockProductCache) Get(_ context.Context, _ string) (*entity.Product, string, error) {
+	return nil, "generation", nil
 }
 
-func (m *mockProductCache) Set(_ context.Context, _ *entity.Product, _ time.Duration) error {
+func (m *mockProductCache) Set(_ context.Context, _ *entity.Product, _ time.Duration, _ string) error {
 	return nil
 }
 

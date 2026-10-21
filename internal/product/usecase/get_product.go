@@ -35,7 +35,8 @@ func (uc *getProductUseCase) Execute(ctx context.Context, id string) (*response.
 	defer span.End()
 	span.SetAttributes(attribute.String("product.id", id))
 
-	if cached, err := uc.cache.Get(ctx, id); err == nil && cached != nil {
+	cached, generation, cacheErr := uc.cache.Get(ctx, id)
+	if cacheErr == nil && cached != nil {
 		return response.FromEntity(cached), nil
 	}
 
@@ -46,7 +47,9 @@ func (uc *getProductUseCase) Execute(ctx context.Context, id string) (*response.
 		return nil, fmt.Errorf("get product: %w", err)
 	}
 
-	_ = uc.cache.Set(ctx, product, productCacheTTL)
+	if cacheErr == nil {
+		_ = uc.cache.Set(ctx, product, productCacheTTL, generation)
+	}
 
 	return response.FromEntity(product), nil
 }

@@ -7,16 +7,18 @@ import (
 
 var (
 	ErrProductNotFound  = errors.New("product not found")
+	ErrProductConflict  = errors.New("product changed concurrently")
 	ErrInvalidSortField = errors.New("invalid sort field")
 	ErrInvalidPreload   = errors.New("invalid preload relation")
 )
 
 type Product struct {
-	ID          string    `gorm:"primaryKey;type:varchar(36)"`
-	Name        string    `gorm:"not null"`
+	ID          string `gorm:"primaryKey;type:varchar(36)"`
+	Name        string `gorm:"not null"`
 	Description string
-	Price       float64   `gorm:"not null"`
-	Stock       int       `gorm:"not null;default:0"`
+	Price       float64 `gorm:"not null"`
+	Stock       int     `gorm:"not null;default:0"`
+	Version     int64   `gorm:"not null;default:0"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }

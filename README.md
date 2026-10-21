@@ -1,6 +1,6 @@
 # microservice-boilerplate
 
-A production-ready Go microservice boilerplate built on Clean Architecture, Domain-Driven Design, and Event-Driven Architecture. Clone this repo as the starting point for any new Go service.
+A Go microservice baseline built on Clean Architecture with a product CRUD reference domain. Review each service's delivery guarantees, security requirements, and infrastructure settings before production use.
 
 The product domain is the reference implementation: standard CRUD with Redis caching and Kafka event publishing on writes (GORM).
 
@@ -103,6 +103,8 @@ Copy `.env.example` to `.env` — Viper loads it automatically on startup.
 |---|---|---|
 | `APP_PORT` | `8003` | HTTP server port |
 | `GIN_MODE` | `debug` | `debug` or `release` |
+| `HTTP_REQUEST_TIMEOUT` | `10s` | Cooperative execution deadline; shorter than HTTP write timeout |
+| `DB_AUTO_MIGRATE` | `false` | Enable only for local development; production applies migrations separately |
 | `HTTP_READ_HEADER_TIMEOUT` | `5s` | Maximum time to read request headers |
 | `HTTP_READ_TIMEOUT` | `15s` | Maximum time to read a request body |
 | `HTTP_WRITE_TIMEOUT` | `15s` | Maximum time to write a response |
@@ -138,7 +140,7 @@ DSN format per driver:
 | `REDIS_DB` | `0` | Database index |
 | `REDIS_POOL_SIZE` | `10` | Max socket connections |
 | `REDIS_MIN_IDLE_CONNS` | `5` | Minimum idle connections |
-| `REDIS_MAX_RETRIES` | `3` | Retries on transient errors |
+| `REDIS_MAX_RETRIES` | `-1` | Client retries disabled; cache adapter owns retry policy |
 | `REDIS_DIAL_TIMEOUT` | `5s` | Connection timeout |
 | `REDIS_READ_TIMEOUT` | `3s` | Read timeout |
 | `REDIS_WRITE_TIMEOUT` | `3s` | Write timeout |
@@ -150,14 +152,59 @@ DSN format per driver:
 | `KAFKA_BROKERS` | `localhost:9092` | Comma-separated broker list |
 | `KAFKA_BATCH_SIZE` | `100` | Messages per batch |
 | `KAFKA_BATCH_TIMEOUT` | `1s` | Max wait before flushing a partial batch |
-| `KAFKA_REQUIRED_ACKS` | `all` | `all` · `leader` · `none` |
-| `KAFKA_ASYNC` | `false` | Fire-and-forget (no delivery guarantee) |
+| `KAFKA_REQUIRED_ACKS` | `all` | `all` or `leader`; no-ack mode is rejected |
+| `KAFKA_ASYNC` | `false` | Must remain false for observable delivery failures |
 | `KAFKA_COMPRESSION` | `none` | `none` · `gzip` · `snappy` · `lz4` · `zstd` |
 
-Redis cache operations and Kafka product-event publishing use three
-in-memory attempts with exponential backoff (50ms, 100ms, 200ms). This keeps
-the baseline simple but is not durable: a process restart or exhausted attempts
-can lose an event. Use a transactional outbox when guaranteed delivery is needed.
+Redis cache operations and Kafka product-event publishing use up to three
+in-memory attempts for transient failures. Full jitter randomizes the two
+backoff waits within 0–50ms and 0–100ms. Client-level retries are disabled.
+Cache operations have a 200ms budget, repository operations 2s, and publishing
+2s, all constrained by the incoming request's 10s deadline. These are execution
+budgets, distinct from socket read/write timeouts.
+
+Publishing is synchronous and best-effort after the database commit.
+`KAFKA_ASYNC=true` and `KAFKA_REQUIRED_ACKS=none` are rejected at startup.
+Events have stable IDs, schema versions, aggregate versions, and a product-ID
+partition key. Consumers must deduplicate IDs and reject stale aggregate versions:
+concurrent publishers and retries can still arrive out of order.
+Process restarts or exhausted attempts can lose events. Adopt a transactional
+outbox only for domains requiring durable delivery.
+
+### Consistency and schema changes
+
+Updates use an optimistic version check; a competing update returns `409`,
+and an update never recreates a deleted product. Single-product database reads
+use the primary. List queries may use replicas and remain eventually consistent.
+
+Cache fills carry a generation token obtained before the database read.
+Invalidation atomically rotates that token and removes cached data; a stale
+fill is rejected. Generation tokens expire after 30s, and fills with expired
+tokens are rejected. Cached products expire after 5m. Redis failures still permit
+database access; a failed invalidation can leave stale data until the cache TTL.
+This is an availability-oriented cache, not a strongly consistent read model.
+
+`DB_AUTO_MIGRATE` defaults to `false`. The example environment enables it for
+local development. Production deployments should apply reviewed, versioned
+migrations before starting the new binary. PostgreSQL migrations are provided:
+
+```bash
+psql "$DB_DSN" -v ON_ERROR_STOP=1 -1 -f migrations/postgres/001_products.sql -f migrations/postgres/002_product_version.sql
+```
+
+Run migrations once as a controlled deployment step; use your migration runner
+to track applied versions and coordinate multiple deployers. Other supported
+database engines require equivalent reviewed migrations. Do not enable
+AutoMigrate as a substitute for production schema-change planning.
+
+`/health` is liveness; `/ready` verifies primary database access and the product
+table. Redis and Kafka failures do not remove readiness because they are optional
+for the chosen best-effort behavior. Protect mutation routes with the deployment's
+authentication and authorization policy before exposing the service.
+
+CI runs tests with PostgreSQL and Redis, the race detector, vet, a build, and
+Swagger drift checks. Local integration tests skip when their infrastructure
+environment variables are absent.
 
 ### OpenTelemetry
 
@@ -172,6 +219,7 @@ can lose an event. Use a transactional outbox when guaranteed delivery is needed
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Liveness check |
+| `GET` | `/ready` | Primary database and product-schema readiness |
 | `GET` | `/swagger/*any` | Swagger UI |
 | `GET` | `/api/v1/products` | List products (paginated `?page=1&page_size=20`, searchable `?search=widget`, sortable `?sort=price:desc`, filterable `?filter=price:gte:10&filter=price:lte:100`, preloadable `?preload=relation`) |
 | `GET` | `/api/v1/products/:id` | Get product by ID |

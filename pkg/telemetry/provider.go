@@ -2,7 +2,9 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
@@ -51,6 +53,9 @@ func InitProvider(ctx context.Context, serviceName string) (shutdown func(contex
 	// Reads OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_METRICS_ENDPOINT.
 	metricExporter, err := otlpmetricgrpc.New(ctx)
 	if err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = tp.Shutdown(cleanupCtx)
 		return nil, fmt.Errorf("create metric exporter: %w", err)
 	}
 	mp := sdkmetric.NewMeterProvider(
@@ -60,9 +65,6 @@ func InitProvider(ctx context.Context, serviceName string) (shutdown func(contex
 	otel.SetMeterProvider(mp)
 
 	return func(ctx context.Context) error {
-		if err := tp.Shutdown(ctx); err != nil {
-			return fmt.Errorf("shutdown tracer provider: %w", err)
-		}
-		return mp.Shutdown(ctx)
+		return errors.Join(tp.Shutdown(ctx), mp.Shutdown(ctx))
 	}, nil
 }

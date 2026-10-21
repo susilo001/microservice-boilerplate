@@ -19,7 +19,7 @@ const docTemplate = `{
     "paths": {
         "/api/v1/products": {
             "get": {
-                "description": "Returns a list of all available products.",
+                "description": "Returns a paginated list of products. Filters use field:operator:value; sort uses field:direction.",
                 "produces": [
                     "application/json"
                 ],
@@ -27,31 +27,67 @@ const docTemplate = `{
                     "products"
                 ],
                 "summary": "List products",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Page number (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Items per page (default 20)",
+                        "name": "page_size",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Substring search across name and description",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Repeatable filter: name:eq:Widget, price:gte:10, stock:lte:50",
+                        "name": "filter",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort: name:asc, price:desc, stock:asc, created_at:desc, updated_at:desc",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated relations to eager-load",
+                        "name": "preload",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ProductResponse"
-                            }
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_ListData-github_com_boilerplate_microservice-boilerplate_internal_product_domain_response_ProductResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_Empty"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_Empty"
                         }
                     }
                 }
             },
             "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Creates a new product. Requires Bearer JWT authentication.",
+                "description": "Creates a new product and publishes a ProductCreated event.",
                 "consumes": [
                     "application/json"
                 ],
@@ -65,11 +101,11 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "description": "Product payload",
-                        "name": "product",
+                        "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_request.CreateProductRequest"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_domain_request.CreateProductRequest"
                         }
                     }
                 ],
@@ -77,25 +113,19 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ProductResponse"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_internal_product_domain_response_ProductResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_Empty"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_Empty"
                         }
                     }
                 }
@@ -124,30 +154,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ProductResponse"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_internal_product_domain_response_ProductResponse"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_Empty"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_Empty"
                         }
                     }
                 }
             },
             "put": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Replaces all fields of an existing product. Requires Bearer JWT authentication.",
+                "description": "Updates an existing product by ID and publishes a ProductUpdated event.",
                 "consumes": [
                     "application/json"
                 ],
@@ -167,12 +192,12 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Updated product payload",
-                        "name": "product",
+                        "description": "Product payload",
+                        "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_request.UpdateProductRequest"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_domain_request.UpdateProductRequest"
                         }
                     }
                 ],
@@ -180,42 +205,40 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ProductResponse"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_internal_product_domain_response_ProductResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_Empty"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_Empty"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_Empty"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_Empty"
                         }
                     }
                 }
             },
             "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
+                "description": "Deletes a product by ID and invalidates its cache entry.",
+                "produces": [
+                    "application/json"
                 ],
-                "description": "Permanently deletes a product. Requires Bearer JWT authentication.",
                 "tags": [
                     "products"
                 ],
@@ -231,24 +254,21 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "204": {
-                        "description": "No Content"
-                    },
-                    "401": {
-                        "description": "Unauthorized",
+                        "description": "No Content",
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_Empty"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_Empty"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse"
+                            "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_Empty"
                         }
                     }
                 }
@@ -256,7 +276,102 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "github_com_boilerplate_microservice-boilerplate_internal_product_usecase_request.CreateProductRequest": {
+        "github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_Empty": {
+            "type": "object",
+            "properties": {
+                "correlationid": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.Empty"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "tin": {
+                    "type": "string"
+                },
+                "tout": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_api_http_v1_response_ListData-github_com_boilerplate_microservice-boilerplate_internal_product_domain_response_ProductResponse": {
+            "type": "object",
+            "properties": {
+                "correlationid": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_api_http_v1_response.ListData-github_com_boilerplate_microservice-boilerplate_internal_product_domain_response_ProductResponse"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "tin": {
+                    "type": "string"
+                },
+                "tout": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_boilerplate_microservice-boilerplate_api_http_v1_response.APIResponse-github_com_boilerplate_microservice-boilerplate_internal_product_domain_response_ProductResponse": {
+            "type": "object",
+            "properties": {
+                "correlationid": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_domain_response.ProductResponse"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "tin": {
+                    "type": "string"
+                },
+                "tout": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_boilerplate_microservice-boilerplate_api_http_v1_response.Empty": {
+            "type": "object"
+        },
+        "github_com_boilerplate_microservice-boilerplate_api_http_v1_response.ListData-github_com_boilerplate_microservice-boilerplate_internal_product_domain_response_ProductResponse": {
+            "type": "object",
+            "properties": {
+                "duration": {
+                    "type": "string"
+                },
+                "finish": {
+                    "type": "string"
+                },
+                "list": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_boilerplate_microservice-boilerplate_internal_product_domain_response.ProductResponse"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "start": {
+                    "type": "string"
+                },
+                "total_items": {
+                    "type": "integer"
+                },
+                "total_pages": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_boilerplate_microservice-boilerplate_internal_product_domain_request.CreateProductRequest": {
             "type": "object",
             "required": [
                 "name",
@@ -282,7 +397,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_boilerplate_microservice-boilerplate_internal_product_usecase_request.UpdateProductRequest": {
+        "github_com_boilerplate_microservice-boilerplate_internal_product_domain_request.UpdateProductRequest": {
             "type": "object",
             "required": [
                 "name",
@@ -308,16 +423,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ErrorResponse": {
-            "type": "object",
-            "properties": {
-                "error": {
-                    "type": "string",
-                    "example": "something went wrong"
-                }
-            }
-        },
-        "github_com_boilerplate_microservice-boilerplate_internal_product_usecase_response.ProductResponse": {
+        "github_com_boilerplate_microservice-boilerplate_internal_product_domain_response.ProductResponse": {
             "type": "object",
             "properties": {
                 "created_at": {
@@ -349,14 +455,6 @@ const docTemplate = `{
                     "example": "2026-04-21T12:30:00Z"
                 }
             }
-        }
-    },
-    "securityDefinitions": {
-        "BearerAuth": {
-            "description": "JWT Bearer token. Format: \"Bearer \u003ctoken\u003e\"",
-            "type": "apiKey",
-            "name": "Authorization",
-            "in": "header"
         }
     }
 }`

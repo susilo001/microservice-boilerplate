@@ -28,7 +28,10 @@ func setup(t *testing.T) domainrepo.ProductRepository {
 	if err := db.AutoMigrate(&entity.Product{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
-	t.Cleanup(func() { db.Exec("DELETE FROM products WHERE id LIKE 'test-%'") })
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM products WHERE id LIKE 'test-%'")
+		databases.Close(db)
+	})
 	return repository.NewProductRepository(db)
 }
 

@@ -1,6 +1,7 @@
 package databases
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -142,4 +143,25 @@ func resolvedPool(cfg Config) (maxOpen, maxIdle int, maxLifetime, maxIdleTime ti
 		maxIdleTime = 5 * time.Minute
 	}
 	return
+}
+
+func Close(db *gorm.DB) error {
+	var closeErrors []error
+	for _, plugin := range db.Config.Plugins {
+		if resolver, ok := plugin.(*dbresolver.DBResolver); ok {
+			_ = resolver.Call(func(pool gorm.ConnPool) error {
+				if closer, ok := pool.(interface{ Close() error }); ok {
+					closeErrors = append(closeErrors, closer.Close())
+				}
+				return nil
+			})
+		}
+	}
+	pool, err := db.DB()
+	if err != nil {
+		closeErrors = append(closeErrors, err)
+	} else {
+		closeErrors = append(closeErrors, pool.Close())
+	}
+	return errors.Join(closeErrors...)
 }

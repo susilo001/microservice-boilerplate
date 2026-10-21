@@ -25,6 +25,10 @@ func Logger(log *zap.Logger) gin.HandlerFunc {
 			)
 		}
 
+		fields = append(fields, zap.String("correlationid", c.GetString("correlationid")))
+		if len(c.Errors) > 0 {
+			fields = append(fields, zap.Error(c.Errors.Last().Err))
+		}
 		log.Info("request", fields...)
 	}
 }

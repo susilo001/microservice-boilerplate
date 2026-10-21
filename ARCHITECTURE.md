@@ -1,4 +1,64 @@
-## Overview
+# Architecture
+
+## Implemented baseline
+
+The repository implements product CRUD over HTTP with a GORM repository,
+Redis cache and best-effort Kafka publishing. The scheduler is a placeholder.
+The BFF, gateway, gRPC, search index, other domains and worker described later
+are an optional reference design, not shipped capabilities.
+
+```mermaid
+flowchart LR
+    HTTP[HTTP client] --> Router[Gin and middleware]
+    Router --> Handler[Product handlers]
+    Handler --> Usecase[Product use cases]
+    Usecase --> Repository[GORM repository]
+    Usecase --> Cache[Redis adapter]
+    Usecase --> Publisher[Kafka adapter]
+    Repository --> Primary[(Primary DB)]
+    Repository -->|list reads only| Replicas[(Optional replicas)]
+    Cache --> Redis[(Redis)]
+    Publisher --> Kafka[Kafka]
+```
+
+Domain contracts separate use cases from adapters. Shared infrastructure in
+pkg imports no internal domains. Composition roots select dependencies and
+own lifecycle. Add providers behind domain-specific contracts when needed;
+avoid forcing transactions or business operations into generic CRUD.
+
+Updates use explicit columns and optimistic version checks. A competing update
+returns 409, and update cannot insert a deleted product. Single-product reads
+use the primary; list reads may be eventually consistent through replicas.
+
+Cache misses obtain a generation token before reading the primary. Invalidation
+atomically rotates the token and deletes data. A fill only succeeds if its
+token is still current, preventing stale fills after successful invalidation.
+Tokens expire after 30s; expired tokens cannot fill. Cache data expires after 5m.
+Failed invalidation can still leave stale values until TTL.
+
+Events carry event ID, schema version and aggregate version. Product ID is
+the Kafka key; consumers deduplicate IDs and reject stale versions because
+concurrent writers may publish out of order. Publishing is synchronous but
+best-effort after commit. A crash or exhausted attempts can lose events.
+This implementation has no durable queue or outbox.
+
+The cooperative request deadline defaults to 10s; operation budgets are 200ms
+for cache, 2s for persistence and 2s for publishing. Adapters own retries:
+three transient-error attempts with jittered waits bounded by 50ms and 100ms.
+Client-level retries are disabled. Parent deadlines take precedence.
+
+/health is liveness; /ready verifies primary access and product schema.
+Redis/Kafka remain optional for readiness. Internal errors are logged with
+correlation IDs and safe public responses. Panic recovery protects handlers.
+HTTP drains before Kafka, Redis, primary/replica pools and telemetry close.
+
+Production deployments apply reviewed migrations before startup; AutoMigrate
+is opt-in for local development. CI exercises PostgreSQL/Redis, race detection,
+vet, build and Swagger drift checks. Other providers need equivalent integration
+verification and migrations. Authentication/authorization remain deployment
+requirements.
+
+## Optional reference design
 
 The target architecture is a set of domain-oriented services behind a
 Backend-for-Frontend (BFF). Clients talk only to the BFF over REST/GraphQL; the
@@ -182,8 +242,8 @@ Client → API Gateway → BFF (span: bff.handler.CreateOrder)
 
 ```
 Order service UpdateOrder:
-  1. Repository.FindByID  → Replica  (read)
-  2. Repository.Update    → Primary  (write)
+  1. Repository.FindByIDForUpdate → Primary (read without locking)
+  2. Repository.Update    → Primary  (explicit write with version check)
   3. Cache.Delete         → Redis    (immediate invalidation)
   → Publisher.Publish → Kafka (order.updated; bounded in-memory retry)
 The BFF also evicts any aggregated cache entries that contained this order.

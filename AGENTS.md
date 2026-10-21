@@ -3,8 +3,7 @@
 > **Current scope:** this repository is a product-only CRUD baseline. The
 > `internal/analytics/` domain, `cmd/worker`, raw `pgx` pool, analytics
 > migration, and `/api/v1/events` endpoint have been removed. Any analytics
-> guidance below is historical only and must not be implemented or restored
-> without an explicit new product requirement.
+> capabilities must not be restored without an explicit new requirement.
 
 > Architecture: Event-Driven (EDA) + Clean Architecture + Domain-Driven Design
 > Module: `github.com/boilerplate/microservice-boilerplate`
@@ -15,19 +14,11 @@
 
 ## Project Overview
 
-A production-ready Go microservice boilerplate with two reference domains:
-
-- **`internal/product/`** — a standard CRUD domain (Create/Read/List/Update/Delete)
-  with Redis caching and Kafka event publishing on writes. Uses GORM.
-- **`internal/analytics/`** — a high-throughput event *ingestion* domain: an
-  HTTP endpoint accepts events, publishes to Kafka asynchronously, and a
-  separate consumer batches records into Postgres via `COPY`. This domain
-  intentionally bypasses GORM for its hot write path — see
-  ["The GORM exception"](#the-gorm-exception-internalanalytics) below.
-
-Clone and extend by adding new domains under `internal/<name>/` following
-`internal/product/`'s conventions for standard CRUD work, or
-`internal/analytics/`'s conventions for high-volume write-heavy ingestion.
+A product CRUD baseline with Redis caching and best-effort Kafka publishing.
+New CRUD domains follow `internal/product/`. Add infrastructure adapters behind
+domain-owned interfaces when a concrete requirement needs them. Shared CRUD
+contracts must stay small and optional; business operations and transactions
+remain domain-specific. Avoid a global interfaces package.
 
 ---
 
@@ -36,10 +27,10 @@ Clone and extend by adding new domains under `internal/<name>/` following
 | Concern | Package | Notes |
 |---|---|---|
 | HTTP framework | `gin-gonic/gin` | Fast router, excellent middleware ecosystem |
-| ORM | `gorm.io/gorm` | Auto-migrate, clean query API. **Not used on the `internal/analytics` bulk-write path — see exception below.** |
+| ORM | `gorm.io/gorm` | Auto-migrate, clean query API. Used by CRUD repository adapters. |
 | DB drivers | `gorm.io/driver/postgres`, `gorm.io/driver/mysql`, `github.com/glebarez/sqlite`, `gorm.io/driver/sqlserver` | Selected at runtime via `DB_DRIVER` |
 | Read/write split | `gorm.io/plugin/dbresolver` | Random replica policy, configurable per domain |
-| Kafka client | `segmentio/kafka-go` | Pure Go, no CGO. See [decision note](#decision-kafka-client) — this repo standardized on `kafka-go` for both domains rather than introducing `franz-go` alongside it. |
+| Kafka client | `segmentio/kafka-go` | Pure Go, no CGO. See [decision note](#decision-kafka-client) — this repo standardized on `kafka-go` for product publishing rather than introducing `franz-go` alongside it. |
 | Redis client | `redis/go-redis/v9` | Context-aware, full pool config |
 | Configuration | `spf13/viper` | Env vars + `.env` file, typed getters |
 | Logging | `uber-go/zap` | Structured, zero-allocation |
@@ -51,97 +42,29 @@ Clone and extend by adding new domains under `internal/<name>/` following
 
 ### Decision: Kafka client
 
-This boilerplate originally specified `segmentio/kafka-go` for the product
-domain and considered `twmb/franz-go` for `internal/analytics`, on the
-theory that per-record producer overhead and batch throughput directly
-determine ingest capacity. **Resolution: this repo standardized on
-`kafka-go` for both domains.** `kafka-go` was already installed and in use
-by the product domain; adding a second Kafka client for one domain is a
-real cost (two dependency surfaces, two configuration shapes, two things to
-patch on CVEs) that wasn't justified without a benchmark showing `kafka-go`
-is actually the bottleneck. If ingest throughput becomes provably
-Kafka-client-bound in practice, benchmark `franz-go` under real load before
-switching — see Good First Task #7. Don't default silently in either
-direction; this note records that the silent default was deliberately
-avoided and `kafka-go` was the measured/reasoned choice, not an accident.
+Use `segmentio/kafka-go`. The publisher owns bounded transient-error retries;
+writer-level retries are disabled. Synchronous acknowledged publishing is
+required for error reporting. Preserve event identity across retries.
 
 ---
 
 ## Architecture Layout
 
-```
-microservice-boilerplate/
-├── AGENTS.md
-├── README.md
-├── Dockerfile                          # Multi-stage: builder (alpine) + runtime (distroless)
-├── .dockerignore
-├── go.mod
-├── go.sum
-├── .env.example
-├── docker-compose.yml                  # Postgres, Kafka, Redis, OTel Collector
-├── Makefile
-├── otel-collector-config.yaml
-├── cmd/
-│   ├── web/
-│   │   └── main.go                     # HTTP server: config → OTel → DB → Redis → Kafka → handler → router
-│   ├── worker/
-│   │   └── main.go                     # Kafka consumer: analytics domain's batch-insert loop lives here
-│   └── scheduler/
-│       └── main.go                     # Scheduled jobs (e.g. partition creation, rollup refresh)
-├── api/
-│   ├── http/
-│   │   ├── v1/
-│   │   │   ├── route/router.go
-│   │   │   ├── middleware/
-│   │   │   │   ├── correlation.go
-│   │   │   │   ├── tracing.go
-│   │   │   │   ├── logger.go
-│   │   │   │   └── error_handler.go
-│   │   │   └── response/response.go
-│   │   └── v2/
-│   └── grpc/
-├── config/
-│   └── config.go
-├── docs/
-├── internal/
-│   ├── product/                        # Reference CRUD domain (see original layout — unchanged)
-│   │   ├── domain/{entity,event,repository,request,response}/
-│   │   ├── usecase/
-│   │   ├── repository/product_repository.go   # GORM
-│   │   ├── cache/product_cache.go
-│   │   ├── gateway/messaging/product_publisher.go
-│   │   └── delivery/http/product_handler.go
-│   └── analytics/                      # High-throughput event ingestion domain
-│       ├── domain/
-│       │   ├── entity/
-│       │   │   └── event.go            # Event struct — event_id, user_id, event_type, payload, occurred_at
-│       │   ├── event/                  # (Kafka wire events, if analytics itself emits derived events)
-│       │   ├── repository/
-│       │   │   └── event_repository.go # Interface: InsertBatch(ctx, []Event) error; HourlyCounts(ctx, ...)
-│       │   └── request/
-│       ├── usecase/
-│       │   └── ingest_usecase.go       # PublishEvent(ctx, Event) — validates, hands to gateway, returns immediately
-│       ├── repository/
-│       │   ├── event_repository.go     # Raw pgx + COPY implementation — see GORM exception below
-│       │   └── event_repository_test.go
-│       ├── gateway/messaging/
-│       │   ├── event_publisher.go      # Kafka producer (async, non-blocking)
-│       │   └── event_consumer.go       # Kafka consumer group + batching logic (size-or-time)
-│       └── delivery/http/
-│           └── ingest_handler.go       # POST /events — Gin handler, returns 202 immediately
-└── pkg/
-    ├── databases/db.go                 # NewDB — GORM multi-driver factory (product domain)
-    ├── databases/rawdb.go              # NewRawPool — pgxpool for analytics domain's COPY path
-    ├── redis/client.go
-    ├── kafka/kafka.go                  # kafka-go writer + reader factories (both domains)
-    ├── telemetry/provider.go
-    ├── tracing/tracing.go
-    ├── viper/viper.go
-    ├── logger/logger.go
-    ├── crypto/crypto.go
-    ├── http/client.go
-    ├── queryutil/                      # Shared GORM list query + Gin query-param helpers
-    └── utils/
+```text
+cmd/web/                              # Wiring and lifecycle
+cmd/scheduler/                        # Scheduled-job placeholder
+api/http/v1/{route,middleware,response}/
+config/
+internal/product/
+  domain/{entity,event,repository,request,response}/
+  usecase/
+  repository/
+  cache/
+  gateway/messaging/
+  delivery/http/
+pkg/{databases,redis,kafka,retry,telemetry,tracing,viper,logger,crypto,http,queryutil,utils}/
+migrations/postgres/                  # Reviewed schema changes
+docs/                                # Generated Swagger
 ```
 
 ---
@@ -159,26 +82,16 @@ microservice-boilerplate/
 - Depends only on `domain/` interfaces — never on concrete implementations
 - Propagates `context.Context` to all I/O calls
 - Creates OTel spans (`otel.Tracer("<domain>/usecase").Start(...)`)
-- **`analytics.IngestUseCase` specifically**: publishes to Kafka and returns.
-  Never calls the repository directly — ingest must not depend on Postgres
-  being reachable.
 
 ### `repository/`
 - **Product domain**: only layer allowed to import `gorm`. Creates OTel spans
   per method; `otelgorm` auto-creates child spans for each SQL query. Maps
   `gorm.ErrRecordNotFound` → domain sentinel errors.
-- **Analytics domain**: uses `pgxpool` directly (see
-  [GORM exception](#the-gorm-exception-internalanalytics)). Bulk writes go
-  through a staging-table + `COPY` + `INSERT ... ON CONFLICT DO NOTHING`
-  pattern, not `gorm.CreateInBatches`.
 
 ### `cache/`
 - Only layer allowed to import `go-redis`
 - Creates OTel spans per method with `cache.key` and `cache.hit` attributes
 - Returns `nil, nil` on cache miss so callers fall through to the DB
-- Not used by `internal/analytics` — there's nothing to cache on a
-  write-mostly ingest path; don't add caching here without a concrete read
-  pattern that needs it.
 
 ### `gateway/messaging/`
 - Only layer allowed to import the Kafka client
@@ -186,18 +99,10 @@ microservice-boilerplate/
   headers via `propagation.TextMapCarrier`
 - **Product domain**: publish failures are non-fatal (best-effort) — do not
   roll back the DB write, since the write already succeeded before publish.
-- **Analytics domain**: publish is the *primary* write path (there is no
-  prior DB write to roll back). A publish failure here must surface to the
-  HTTP handler as an error — see `ingest_handler.go`.
 
 ### `delivery/http/`
 - Gin handlers only — no router setup, no middleware
 - Creates OTel spans per handler method
-- **`analytics.IngestHandler`**: returns `202 Accepted` the moment the event
-  is handed to Kafka — never waits on a DB write. This is the single most
-  important behavioral contract in this domain; do not add a synchronous
-  DB call here for any reason (validation, dedup checks, etc. — all of
-  that happens downstream in the consumer).
 
 ### `api/http/v1/`
 Unchanged from the original boilerplate — see middleware stack order below.
@@ -209,44 +114,30 @@ RequestTimer → CorrelationID → otelgin → TraceContext → Logger → Error
 
 ### `pkg/`
 - Domain-agnostic, process-wide infrastructure — no imports from `internal/`
-- `databases/db.go` (GORM) and `databases/rawdb.go` (pgxpool) coexist
-  deliberately — see the exception below for which domains use which.
+- Use GORM-backed persistence infrastructure for CRUD domains.
 - `queryutil/` owns generic GORM list-query building and Gin list-query
   parsing — it may import GORM/Gin but no domain package.
 
 ### `cmd/`
 - Thin wiring only: load config → init OTel → connect infra → build use
   cases → start server / consumer loop → graceful shutdown
-- `cmd/worker/main.go` runs the analytics domain's Kafka consumer group,
-  batching records and calling `event_repository.InsertBatch`.
 
 ---
 
-## The GORM exception (`internal/analytics`)
+## Persistence and cache consistency
 
-The boilerplate's general rule is **"no raw `database/sql` or `pgx` — always
-go through GORM."** `internal/analytics/repository/event_repository.go` is
-the one deliberate, documented exception to that rule, for one reason:
-GORM's batch insert (`CreateInBatches`) is still row-oriented SQL under the
-hood. Postgres's `COPY` protocol is typically 10-50x faster for bulk loads,
-and that difference is the entire point of a high-throughput ingest domain.
+Updates use explicit columns, ID plus version, and affected-row checks.
+Never use GORM Save for an existing-record update: its insert fallback may
+recreate a deleted product. Zero-valued fields must remain writable.
+`FindByIDForUpdate` selects the primary; it does not lock the row.
+Optimistic version checks protect the subsequent write. Transactions spanning
+multiple writes belong behind a business-specific repository contract.
 
-Rules for this exception:
-
-1. **Scope is narrow.** Only `internal/analytics/repository/` uses
-   `pgxpool` directly, via `pkg/databases/rawdb.go`. Every other domain
-   (`internal/product/` and any new CRUD domain you add) uses GORM as
-   normal. Don't let the exception spread.
-2. **The pattern must stay staging-table + `COPY` + `INSERT ... ON CONFLICT
-   DO NOTHING`** — not a raw `INSERT` loop. If you're not using `COPY`,
-   there's no reason for the exception to exist; go back to GORM.
-3. **Idempotency is still required.** `event_id` + `occurred_at` unique
-   constraint, `ON CONFLICT DO NOTHING`, exactly as in a GORM-backed domain
-   — Kafka's at-least-once delivery doesn't care which DB driver you used.
-4. **If you add a second high-throughput domain**, it may reuse this
-   pattern, but don't generalize it into a framework prematurely — copy
-   the pattern deliberately and adjust, the same way `internal/product` is
-   meant to be copied for new CRUD domains.
+Single-product reads use the primary. Lists may use replicas and are eventually
+consistent. Cache Get returns a generation token; Set requires that token and
+rejects fills after invalidation or token expiry. Delete atomically rotates
+the token and removes the data. Tokens expire after 30s; data after 5m.
+Failed invalidation can leave stale data until TTL; do not claim strong consistency.
 
 ---
 
@@ -256,7 +147,6 @@ Rules for this exception:
 domain                          → nothing internal
 usecase                         → domain
 repository (product)            → domain, gorm
-repository (analytics)          → domain, pgxpool   [documented exception, see above]
 cache                           → domain
 gateway                         → domain
 api/http/v1/middleware          → nothing internal
@@ -284,30 +174,27 @@ otelgin: HTTP <METHOD> <PATH>
     kafka.publish.<event>
 ```
 
-### Span waterfall — analytics domain
+### Failure budgets and HTTP safety
 
-```
-otelgin: HTTP POST /events
-  analytics.handler.Ingest
-    analytics.usecase.PublishEvent
-      kafka.publish.raw-events          ← async; span ends when handed to producer, not on ack
+HTTP execution defaults to 10s and must be shorter than write timeout. Cache
+operations use 200ms, repository operations 2s and publishing 2s, constrained
+by the parent context. Deadlines are cooperative; adapters must honor them.
 
-# separately, in cmd/worker (no HTTP parent span — root span per batch):
-analytics.consumer.batch
-  analytics.repository.InsertBatch
-    pgx.copy: staged_events
-    pgx.exec: insert_from_staging
-```
+Adapters own retries. Disable duplicate client retries; retry transient failures
+only, with jitter, bounded attempts and capped delays. Three attempts have
+two default waits bounded by 50ms and 100ms. Do not blindly retry non-idempotent
+operations.
 
-Batches don't have a single incoming request to inherit a trace from, so
-`analytics.consumer.batch` starts a fresh root span per flush, with
-`batch.size` and `batch.trigger` (`"size"` or `"timeout"`) as span attributes.
+Return safe public 500 messages; log internal details and correlation IDs.
+Map concurrent updates to 409 and deadlines to 504. Install panic recovery.
+`/health` is liveness; `/ready` checks primary access and product schema.
+Redis/Kafka are optional for readiness under the chosen best-effort policy.
 
 ### Trace propagation
 
 Same as original: `otelgin` extracts W3C `traceparent`/`tracestate` on
 inbound HTTP; `TraceContext` middleware stores `trace_id`/`span_id` in Gin
-context. Outgoing Kafka messages (both domains) inject trace context via
+context. Outgoing Kafka messages  inject trace context via
 `otel.GetTextMapPropagator().Inject(ctx, &kafkaHeaderCarrier)`.
 
 ### Span instrumentation points
@@ -319,10 +206,6 @@ context. Outgoing Kafka messages (both domains) inject trace context via
 | Product repository | `product/repository` | `product.repository.<Method>` |
 | Product cache | `product-service/cache` | `cache.product.<op>` |
 | Product Kafka publisher | `product-service/kafka` | `kafka.publish.<EventName>` |
-| Analytics handler | `analytics/handler` | `analytics.handler.Ingest` |
-| Analytics usecase | `analytics/usecase` | `analytics.usecase.PublishEvent` |
-| Analytics consumer | `analytics/consumer` | `analytics.consumer.batch` |
-| Analytics repository | `analytics/repository` | `analytics.repository.InsertBatch` |
 
 All spans call `span.RecordError(err)` + `span.SetStatus(codes.Error, ...)` on failure.
 
@@ -340,28 +223,18 @@ Unchanged: selects dialector via `DB_DRIVER` (`postgres` / `mysql` /
 `sqlite` / `sqlserver`), configures pool settings, wires `dbresolver` for
 read/write split.
 
-### `NewRawPool(ctx context.Context, dsn string) (*pgxpool.Pool, error)` — analytics domain only
+### Schema changes
 
-Postgres-only (bulk `COPY` isn't a portable concept across the multi-driver
-abstraction). Used exclusively by `internal/analytics/repository`. Pool size
-should be tuned separately from the GORM pool — batch writes are fewer,
-larger transactions, not many small ones.
-
-### Schema notes for `analytics`
-
-The `events` table should be time-partitioned (`PARTITION BY RANGE
-(occurred_at)`) with a BRIN index on `occurred_at` rather than the default
-B-tree GORM would generate — BRIN stays tiny for time-ordered inserts at
-volume, and partitioning lets you drop old data cheaply. This isn't
-something `AutoMigrate` expresses well; keep this table's schema in a plain
-SQL migration file rather than a GORM model, even though the Go-side
-`entity.Event` struct still exists for type safety in application code.
+`DB_AUTO_MIGRATE` is opt-in for development. Production applies reviewed,
+versioned migrations before starting the binary. PostgreSQL migrations live
+in `migrations/postgres/`; other engines require equivalent migrations.
+Use a migration runner to track versions and coordinate deployers.
 
 ---
 
 ## Event Architecture
 
-### Event contract (both domains)
+### Event contract
 
 ```go
 type Event interface {
@@ -376,20 +249,18 @@ type Event interface {
 |---|---|---|
 | `product.created` | product | Product created |
 | `product.updated` | product | Product updated |
-| `raw-events` | analytics | Client-submitted event, published by ingest handler |
-| `dead-letter-events` | analytics | *(planned — see Good First Tasks)* malformed or repeatedly-failing records |
 
 ### Rules
 
-- **Product domain**: publish **after** a successful DB write, never before;
-  publish failure is non-fatal.
-- **Analytics domain**: publish **is** the write (there's no prior DB write
-  to sequence after); publish failure must be surfaced as an ingest error.
-- Both: consumers must be idempotent (at-least-once delivery).
-- Both: always inject OTel trace context into Kafka message headers.
-- **Analytics consumer specifically**: commit Kafka offsets only *after* a
-  batch is durably written to Postgres — never before. Batch by size OR
-  time (whichever comes first), not by size alone or time alone.
+- Publish after a successful DB write; product publish failures are non-fatal.
+- Publishing is in-memory and may lose events after crashes or exhausted attempts.
+  Adopt a transactional outbox only for an explicit durable-delivery requirement.
+- Events carry event ID, schema version and aggregate version. Preserve identity
+  across retries. Use product ID as the Kafka key with a key-aware partitioner.
+- Consumers deduplicate event IDs and ignore stale aggregate versions;
+  concurrent publishing and retries may arrive out of order.
+- Inject W3C trace headers.
+- Startup rejects async Kafka mode and unacknowledged writes for this publisher.
 
 ---
 
@@ -403,24 +274,20 @@ type Event interface {
 
 ### Naming
 - Files: `snake_case.go`
-- Interfaces: noun, no `I` prefix (`ProductRepository`, `EventRepository`)
-- Use case structs: `<Action><Entity>UseCase` (`CreateProductUseCase`, `PublishEventUseCase`)
-- Handler structs: `<Entity>Handler` (`ProductHandler`, `IngestHandler`)
+- Interfaces: noun, no `I` prefix (`ProductRepository`, `ProductCache`)
+- Use case structs: `<Action><Entity>UseCase` (`CreateProductUseCase`)
+- Handler structs: `<Entity>Handler` (`ProductHandler`)
 - Constructors: `New<Type>`
 
 ### Dependency injection
 - Wire manually in `cmd/*/main.go` — no DI framework (no Wire, no Fx)
-- Order: telemetry → DB (GORM + raw pool, as needed) → Redis → Kafka →
+- Order: telemetry → DB → Redis → Kafka →
   infrastructure → use cases → handler → router → server
 - Pass interfaces, not concrete types, to constructors
 
 ### Database
-- Product domain: `AutoMigrate` in `cmd/web/main.go` on startup
-- Analytics domain: plain SQL migration file (partitioning + BRIN aren't
-  well-expressed by `AutoMigrate`) — run manually or via your migration
-  tool of choice, not `AutoMigrate`
+- Product domain: AutoMigrate on startup only when DB_AUTO_MIGRATE=true (development)
 - `*gorm.DB` never leaves `internal/product/repository/`
-- `*pgxpool.Pool` never leaves `internal/analytics/repository/`
 
 ### List endpoints (search / sort / filter / preload)
 - Convention established by `internal/product`'s `GET /api/v1/products` —
@@ -463,10 +330,7 @@ type Event interface {
 
 ### Testing
 - Use case tests: mock repository/cache/publisher interfaces — no real infra
-- Repository integration tests: real DB via `DB_DSN` (product) or
-  `ANALYTICS_DB_DSN` (analytics) env var; skipped when absent (`t.Skip`)
-- Analytics consumer batching logic (size trigger vs. timeout trigger) is
-  pure logic — test it without Kafka/Postgres at all
+- PostgreSQL repository tests use DB_DSN; Redis tests use REDIS_ADDR. Both skip when absent. SQLite regression tests always run.
 - Table-driven tests preferred
 - Test files: `<file>_test.go` in the same package
 
@@ -475,8 +339,7 @@ type Event interface {
 ## Docker
 
 Multi-stage Dockerfile, distroless runtime — unchanged from original.
-`CGO_ENABLED=0` remains safe: `pgx` (used by the analytics domain) is
-pure-Go, same as every GORM driver already in the stack.
+`CGO_ENABLED=0` is supported by the bundled database drivers.
 
 ### Makefile targets
 
@@ -495,6 +358,8 @@ make docker-push [IMAGE_NAME=...] [IMAGE_TAG=...]
 |---|---|---|
 | `APP_PORT` | `8003` | HTTP server port |
 | `GIN_MODE` | `debug` | `debug` or `release` |
+| `HTTP_REQUEST_TIMEOUT` | `10s` | Cooperative request execution budget |
+| `DB_AUTO_MIGRATE` | `false` | Development-only schema creation/update |
 
 ### Database (product domain — GORM)
 | Variable | Default | Description |
@@ -507,13 +372,7 @@ make docker-push [IMAGE_NAME=...] [IMAGE_TAG=...]
 | `DB_CONN_MAX_LIFETIME` | `5m` | Pool: max connection age |
 | `DB_CONN_MAX_IDLE_TIME` | `5m` | Pool: max idle time |
 
-### Database (analytics domain — raw pgxpool)
-| Variable | Default | Description |
-|---|---|---|
-| `ANALYTICS_DB_DSN` | postgres://… | Postgres-only; used by `pkg/databases.NewRawPool` |
-| `ANALYTICS_DB_MAX_CONNS` | `10` | Separate from the GORM pool — batch writes are fewer, larger transactions |
-| `BATCH_SIZE` | `500` | Consumer flush trigger (record count) |
-| `BATCH_TIMEOUT` | `200ms` | Consumer flush trigger (max wait) |
+
 
 ### Redis
 | Variable | Default |
@@ -523,7 +382,7 @@ make docker-push [IMAGE_NAME=...] [IMAGE_TAG=...]
 | `REDIS_DB` | `0` |
 | `REDIS_POOL_SIZE` | `10` |
 | `REDIS_MIN_IDLE_CONNS` | `5` |
-| `REDIS_MAX_RETRIES` | `3` |
+| `REDIS_MAX_RETRIES` | `-1` (adapter owns retries) |
 | `REDIS_DIAL_TIMEOUT` | `5s` |
 | `REDIS_READ_TIMEOUT` | `3s` |
 | `REDIS_WRITE_TIMEOUT` | `3s` |
@@ -532,16 +391,14 @@ make docker-push [IMAGE_NAME=...] [IMAGE_TAG=...]
 | Variable | Default | Options |
 |---|---|---|
 | `KAFKA_BROKERS` | `localhost:9092` | comma-separated |
-| `KAFKA_TOPIC` | `raw-events` | analytics domain's ingest topic |
-| `KAFKA_CONSUMER_GROUP` | `analytics-processor` | analytics domain's consumer group |
 | `KAFKA_BATCH_SIZE` | `100` | producer batch size |
 | `KAFKA_REQUIRED_ACKS` | `all` | `all` · `leader` · `none` |
-| `KAFKA_COMPRESSION` | `snappy` | `none` · `gzip` · `snappy` · `lz4` · `zstd` |
+| `KAFKA_COMPRESSION` | `none` | `none` · `gzip` · `snappy` · `lz4` · `zstd` |
 
 ### OpenTelemetry
 | Variable | Default | Notes |
 |---|---|---|
-| `OTEL_SERVICE_NAME` | `product-service` | Read by app and OTel SDK — set per binary (`web`, `worker`, `scheduler`) |
+| `OTEL_SERVICE_NAME` | `product-service` | Read by app and OTel SDK — set per binary (`web`, `scheduler`) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | Read by OTel SDK directly |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | `localhost:4317` | gRPC — no `http://` prefix |
 
@@ -555,13 +412,11 @@ make infra-up / infra-down
 
 # Development
 make run              # go run ./cmd/web
-make worker           # go run ./cmd/worker   (analytics consumer)
 make build            # swagger regen + go build ./...
 make test             # go test ./...
 make test-race        # go test -race ./...
 make lint             # golangci-lint run ./...
 make tidy             # go mod tidy
-make load-test        # fire load at POST /events, report p50/p95/p99
 
 # Docker
 make docker-build
@@ -576,14 +431,7 @@ make docker-push
 - **No DI framework** — wire manually in `cmd/*/main.go`
 - **No raw `database/sql` or `pgx` in `internal/product/` or any new CRUD
   domain** — use `pkg/databases.NewDB`; never bypass GORM there.
-- **`internal/analytics/repository/` is the sole, documented exception** —
-  it uses `pgxpool` for `COPY`-based bulk writes. Don't extend this
-  exception to other domains without a concrete throughput justification,
-  and don't "clean up" this domain by rewriting it to use GORM — that
-  reintroduces the exact bottleneck it exists to solve.
-- **`*gorm.DB` stays in product-style `repository/`; `*pgxpool.Pool` stays
-  in `internal/analytics/repository/`** — never pass either to usecase,
-  domain, or handler layers.
+- **GORM clients stay in repository adapters and composition roots**; never pass clients to use cases, domain or handlers.
 - **`repository/` and `gateway/` never imported by `domain/` or
   `usecase/`** — only interfaces cross that boundary.
 - **`pkg/` has no `internal/` imports** — must remain domain-agnostic.
@@ -591,43 +439,28 @@ make docker-push
 - **OTel spans belong in `delivery/`, `usecase/`, `repository/`, `cache/`,
   and `gateway/`** — not in `domain/`; always propagate `context.Context`.
 - **Always call the OTel `shutdown` function on graceful shutdown.**
-- **`internal/analytics` ingest handler never performs a synchronous
-  Postgres call** — validation and Kafka publish only. This is the single
-  most important behavioral rule in the analytics domain; treat any change
-  that adds a DB call to the ingest path as a regression, not a feature.
-- **`internal/analytics` consumer commits Kafka offsets only after a batch
-  is durably written** — preserve this ordering in any change to the
-  consumer loop.
 - **New Kafka topics must be added to the Topics table above.**
-- **New CRUD domains follow `internal/product/`'s structure. New
-  high-throughput ingestion domains follow `internal/analytics/`'s
-  structure** — pick the one that matches the domain's actual read/write
-  shape rather than defaulting to whichever one you copied last.
+- **New CRUD domains follow internal/product**, with domain-owned contracts.
 
 ---
 
-## Good First Tasks
+## Extension guidelines
 
-Ordered roughly by how self-contained each is. One task per PR.
+For every new adapter, document timeout, retry ownership, idempotency,
+consistency, failure behavior, lifecycle and shutdown requirements.
+Add providers only behind contracts that reflect a real use case.
+Keep clients out of use cases. Domain-specific transactions stay behind
+repository contracts.
 
-1. **Tests** for `analytics.usecase.PublishEvent` (validation) and the
-   consumer's batching logic (size trigger vs. timeout trigger) — pure
-   logic, no infra needed.
-2. **Dead-letter path**: records that fail JSON unmarshal or repeatedly
-   fail `InsertBatch` should go to `dead-letter-events` instead of being
-   logged and dropped.
-3. **Automate partition creation** for the `events` table — `pg_partman`,
-   or a scheduled job in `cmd/scheduler` that creates next month's
-   partition ahead of time.
-4. **Hourly rollup job** in `cmd/scheduler`: populate an
-   `event_hourly_rollup` table from raw `events`, then switch the
-   analytics read endpoint to query the rollup instead of aggregating raw
-   rows live.
-5. **Prometheus `/metrics`** on `cmd/web` and `cmd/worker` — ingest rate,
-   batch size distribution, insert latency, consumer lag.
-6. **Graceful degradation**: if Kafka is unreachable, `POST /events`
-   should return `503` with a clear error rather than hanging.
-7. **Benchmark `kafka-go` vs `franz-go`** under realistic load if ingest
-   throughput is ever suspected to be client-bound — this repo already
-   standardized on `kafka-go` for both domains (see
-   [decision note](#decision-kafka-client)); only revisit with numbers.
+CI runs vet, a build, race detection with PostgreSQL/Redis, and Swagger drift
+checks. Unit tests cover update conflicts/deletion, retry cancellation and
+classification, safe HTTP errors, and stable event identity/partition keys.
+Redis tests cover stale fills after invalidation. Integration tests require
+disposable infrastructure; never point tests at production.
+
+Close HTTP, Kafka, Redis, primary/replica pools and telemetry at shutdown.
+Return startup/server errors so deferred cleanup executes. Flush both telemetry
+providers even if one fails. Apply authentication and authorization policies
+before exposing mutation routes.
+
+Postman CLI is installed and available for API engineering work.

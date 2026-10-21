@@ -8,7 +8,7 @@ import (
 )
 
 type ProductCache interface {
-	Get(ctx context.Context, id string) (*entity.Product, error)
-	Set(ctx context.Context, product *entity.Product, ttl time.Duration) error
+	Get(ctx context.Context, id string) (*entity.Product, string, error)
+	Set(ctx context.Context, product *entity.Product, ttl time.Duration, generation string) error
 	Delete(ctx context.Context, id string) error
 }

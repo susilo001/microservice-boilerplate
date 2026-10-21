@@ -9,7 +9,7 @@ IMAGE_TAG  ?= latest
 # ── Development ───────────────────────────────────────────────────────────────
 
 swagger-install:
-	go install github.com/swaggo/swag/cmd/swag@latest
+	go install github.com/swaggo/swag/cmd/swag@v1.16.4
 
 swagger:
 	swag init \

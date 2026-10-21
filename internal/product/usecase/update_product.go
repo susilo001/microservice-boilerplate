@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -60,12 +61,15 @@ func (uc *updateProductUseCase) Execute(ctx context.Context, id string, req requ
 	_ = uc.cache.Delete(ctx, id)
 
 	evt := event.ProductUpdatedEvent{
-		ProductID:   product.ID,
-		Name:        product.Name,
-		Description: product.Description,
-		Price:       product.Price,
-		Stock:       product.Stock,
-		UpdatedAt:   product.UpdatedAt,
+		EventID:       uuid.NewString(),
+		SchemaVersion: 1,
+		Version:       product.Version,
+		ProductID:     product.ID,
+		Name:          product.Name,
+		Description:   product.Description,
+		Price:         product.Price,
+		Stock:         product.Stock,
+		UpdatedAt:     product.UpdatedAt,
 	}
 	_ = uc.publisher.Publish(ctx, evt)
 
