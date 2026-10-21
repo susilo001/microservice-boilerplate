@@ -44,16 +44,6 @@ func (r *productRepository) Create(ctx context.Context, product *entity.Product)
 }
 
 func (r *productRepository) FindByID(ctx context.Context, id string) (*entity.Product, error) {
-	return r.findByID(ctx, id, r.db.Clauses(dbresolver.Write))
-}
-
-// FindByIDForUpdate reads from the primary so an update never starts from a
-// lagging replica and overwrites newer data.
-func (r *productRepository) FindByIDForUpdate(ctx context.Context, id string) (*entity.Product, error) {
-	return r.findByID(ctx, id, r.db.Clauses(dbresolver.Write))
-}
-
-func (r *productRepository) findByID(ctx context.Context, id string, db *gorm.DB) (*entity.Product, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	ctx, span := tracer.Start(ctx, "product.repository.FindByID")
@@ -61,7 +51,7 @@ func (r *productRepository) findByID(ctx context.Context, id string, db *gorm.DB
 	span.SetAttributes(attribute.String("product.id", id))
 
 	var product entity.Product
-	if err := db.WithContext(ctx).First(&product, "id = ?", id).Error; err != nil {
+	if err := r.db.WithContext(ctx).Clauses(dbresolver.Write).First(&product, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, entity.ErrProductNotFound
 		}

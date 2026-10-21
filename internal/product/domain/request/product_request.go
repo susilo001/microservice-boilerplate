@@ -22,6 +22,6 @@ type ListProductsRequest struct {
 	PageSize int      `query:"page_size,default=20,min=1"`
 	Search   string   `query:"search" search:"name,description"`
 	Filters  []string `query:"filter" filter:"name:string:eq|like,price:float64:eq|gte|lte,stock:int:eq|gte|lte"`
-	Sort     string   `query:"sort" sort:"name,price,stock,created_at,updated_at"`
+	Sort     string   `query:"sort" sort:"name,price,stock,created_at,updated_at" sortkey:"id"`
 	Preload  []string `query:"preload,list" preload:""`
 }

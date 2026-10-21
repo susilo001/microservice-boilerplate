@@ -28,6 +28,35 @@ type Product struct {
 	UpdatedAt   time.Time
 }
 
+type ProductDetails struct {
+	Name        string
+	Description string
+	Price       float64
+	Stock       int
+}
+
+func NewProduct(id string, details ProductDetails) (*Product, error) {
+	if err := validation.Required("id", id, ErrInvalidProduct); err != nil {
+		return nil, err
+	}
+	product := &Product{ID: id}
+	if err := product.ChangeDetails(details); err != nil {
+		return nil, err
+	}
+	return product, nil
+}
+
+func (product *Product) ChangeDetails(details ProductDetails) error {
+	if err := ValidateProduct(details.Name, details.Price, details.Stock); err != nil {
+		return err
+	}
+	product.Name = details.Name
+	product.Description = details.Description
+	product.Price = details.Price
+	product.Stock = details.Stock
+	return nil
+}
+
 func ValidateProduct(name string, price float64, stock int) error {
 	if err := validation.Required("name", name, ErrInvalidProduct); err != nil {
 		return err

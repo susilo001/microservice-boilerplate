@@ -38,6 +38,7 @@ func NewRouter(handler *producthttp.ProductHandler, log *zap.Logger, serviceName
 			c.GetString("correlationid"), apiresp.ContextTime(c, "tin"), time.Now(), "Internal Server Error"))
 	}))
 	r.Use(apimw.Deadline(options.RequestTimeout))
+	r.Use(apimw.BodyLimit())
 	r.Use(apimw.ErrorHandler(func(err error) int {
 		if errors.Is(err, entity.ErrProductNotFound) {
 			return http.StatusNotFound

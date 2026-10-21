@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
-	domainEvent "github.com/boilerplate/microservice-boilerplate/internal/product/domain/event"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
+	"github.com/boilerplate/microservice-boilerplate/pkg/event"
 	"github.com/boilerplate/microservice-boilerplate/pkg/queryutil"
 )
 
@@ -48,10 +48,6 @@ func (m *mockProductRepository) FindByID(_ context.Context, id string) (*entity.
 		return nil, entity.ErrProductNotFound
 	}
 	return p, nil
-}
-
-func (m *mockProductRepository) FindByIDForUpdate(ctx context.Context, id string) (*entity.Product, error) {
-	return m.FindByID(ctx, id)
 }
 
 func (m *mockProductRepository) FindAll(_ context.Context) ([]entity.Product, error) {
@@ -193,11 +189,11 @@ func (m *mockProductCache) Delete(_ context.Context, _ string) error {
 }
 
 type mockPublisher struct {
-	published []domainEvent.Event
+	published []event.Event
 	err       error
 }
 
-func (m *mockPublisher) Publish(_ context.Context, e domainEvent.Event) error {
+func (m *mockPublisher) Publish(_ context.Context, e event.Event) error {
 	m.published = append(m.published, e)
 	return m.err
 }

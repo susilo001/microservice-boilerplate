@@ -242,7 +242,7 @@ Client → API Gateway → BFF (span: bff.handler.CreateOrder)
 
 ```
 Order service UpdateOrder:
-  1. Repository.FindByIDForUpdate → Primary (read without locking)
+  1. Repository.FindByID → Primary (read without locking)
   2. Repository.Update    → Primary  (explicit write with version check)
   3. Cache.Delete         → Redis    (immediate invalidation)
   → Publisher.Publish → Kafka (order.updated; bounded in-memory retry)

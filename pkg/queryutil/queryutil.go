@@ -10,10 +10,16 @@ import (
 	"strings"
 
 	"github.com/boilerplate/microservice-boilerplate/pkg/apperror"
+	"github.com/boilerplate/microservice-boilerplate/pkg/validation"
 	"gorm.io/gorm"
 )
 
 var ErrInvalidQuery = &apperror.Error{Code: "invalid_query", Message: "invalid list query"}
+
+const (
+	MaxPageSize = 100
+	MaxOffset   = 100000
+)
 
 type Filter struct {
 	Column string
@@ -27,13 +33,13 @@ type ListParams struct {
 	Filters       []Filter
 	SortBy        string
 	SortDir       string
+	SortKey       string
 	Preload       []string
 	Offset        int
 	Limit         int
 }
 
-// Bind fills dst from URL values using query tags. Invalid optional scalar
-// values stay unset. Slices preserve repeated values; add ,list to split one
+// Bind fills dst from URL values using query tags. Slices preserve repeated values; add ,list to split one
 // comma-separated value (used by preload).
 func Bind(values url.Values, dst any) error {
 	v, err := structValue(dst)
@@ -63,7 +69,7 @@ func Bind(values url.Values, dst any) error {
 		}
 		set, err := setValue(v.Field(i), raw, opts)
 		if err != nil {
-			return fmt.Errorf("query field %s: %w", key, err)
+			return invalidQuery(key, "valid_scalar")
 		}
 		if !set {
 			continue
@@ -87,6 +93,7 @@ func BuildListParams(src any) (ListParams, error) {
 	for i := 0; i < v.NumField(); i++ {
 		field, value := v.Type().Field(i), v.Field(i)
 		key, _ := queryTag(field)
+		preload, hasPreload := field.Tag.Lookup("preload")
 		switch {
 		case field.Tag.Get("search") != "":
 			p.Search = value.String()
@@ -94,29 +101,41 @@ func BuildListParams(src any) (ListParams, error) {
 		case field.Tag.Get("filter") != "":
 			filters, err := parseFilters(value.Interface().([]string), field.Tag.Get("filter"))
 			if err != nil {
-				return ListParams{}, fmt.Errorf("%w: %v", ErrInvalidQuery, err)
+				return ListParams{}, invalidQuery(key, "allowed_filter")
 			}
 			p.Filters = filters
 		case field.Tag.Get("sort") != "":
 			sortBy, sortDir, err := parseSort(value.String(), split(field.Tag.Get("sort")))
 			if err != nil {
-				return ListParams{}, fmt.Errorf("%w: %v", ErrInvalidQuery, err)
+				return ListParams{}, invalidQuery(key, "allowed_sort")
 			}
 			p.SortBy, p.SortDir = sortBy, sortDir
-		case field.Tag.Get("preload") != "":
+			p.SortKey = field.Tag.Get("sortkey")
+			if p.SortBy == "" {
+				p.SortBy = p.SortKey
+			}
+		case hasPreload:
 			p.Preload = value.Interface().([]string)
 			for _, relation := range p.Preload {
-				if !contains(split(field.Tag.Get("preload")), relation) {
-					return ListParams{}, fmt.Errorf("%w: invalid preload %q", ErrInvalidQuery, relation)
+				if !contains(split(preload), relation) {
+					return ListParams{}, invalidQuery(key, "allowed_relation")
 				}
 			}
 		case key == "page":
-			page = intValue(value)
+			if value := intValue(value); value != 0 {
+				page = value
+			}
 		case key == "page_size":
-			if limit := intValue(value); limit > 0 {
+			if limit := intValue(value); limit != 0 {
 				p.Limit = limit
 			}
 		}
+	}
+	if p.Limit < 1 || p.Limit > MaxPageSize {
+		return ListParams{}, invalidQuery("page_size", "between_1_and_100")
+	}
+	if page < 1 || page-1 > MaxOffset/p.Limit {
+		return ListParams{}, invalidQuery("page", "bounded_offset")
 	}
 	p.Offset = (page - 1) * p.Limit
 	return p, nil
@@ -142,6 +161,9 @@ func ApplySearchAndFilters(query *gorm.DB, p ListParams) *gorm.DB {
 func ApplySortPreloadPage(query *gorm.DB, p ListParams) *gorm.DB {
 	if p.SortBy != "" {
 		query = query.Order(p.SortBy + " " + p.SortDir)
+	}
+	if p.SortKey != "" && p.SortBy != p.SortKey {
+		query = query.Order(p.SortKey + " asc")
 	}
 	for _, relation := range p.Preload {
 		query = query.Preload(relation)
@@ -257,12 +279,12 @@ func setValue(field reflect.Value, raw string, opts map[string]string) (bool, er
 	case reflect.Int, reflect.Int64:
 		value, err := strconv.ParseInt(raw, 10, field.Type().Bits())
 		if err != nil {
-			return false, nil
+			return false, err
 		}
 		if min, ok := opts["min"]; ok {
 			minimum, _ := strconv.ParseInt(min, 10, 64)
 			if value < minimum {
-				value = minimum
+				return false, fmt.Errorf("value is below minimum")
 			}
 		}
 		field.SetInt(value)
@@ -291,6 +313,10 @@ func intValue(value reflect.Value) int {
 		return int(value.Int())
 	}
 	return 0
+}
+
+func invalidQuery(field, rule string) error {
+	return &validation.Error{Field: field, Rule: rule, Cause: ErrInvalidQuery}
 }
 
 func split(value string) []string {

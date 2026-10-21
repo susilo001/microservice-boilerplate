@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -20,6 +19,7 @@ import (
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
 	_ "github.com/boilerplate/microservice-boilerplate/internal/product/domain/response"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/usecase"
+	"github.com/boilerplate/microservice-boilerplate/pkg/apperror"
 	"github.com/boilerplate/microservice-boilerplate/pkg/queryutil"
 )
 
@@ -106,12 +106,14 @@ func (h *ProductHandler) List(c *gin.Context) {
 	var req request.ListProductsRequest
 	if err := queryutil.Bind(c.Request.URL.Query(), &req); err != nil {
 		log := pkglogger.FromContext(ctx, h.log).With(zap.String("operation", "ListProducts"))
-		log.Warn("request decoding rejected", zap.String("reason", "invalid_query"))
+		details := apperror.Classify(err)
+		log.Warn("request decoding rejected", zap.String("reason", details.Reason),
+			zap.String("validation_field", details.ValidationField), zap.String("validation_rule", details.ValidationRule))
 		pkglogger.DebugPayload(log, "request decoding input", "request", req)
 		pkglogger.DebugPayload(log, "request decoding response", "response", map[string]any{"error": "invalid_query"})
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		_ = c.Error(fmt.Errorf("%w: invalid query parameters", queryutil.ErrInvalidQuery))
+		_ = c.Error(err)
 		return
 	}
 	span.SetAttributes(
@@ -156,10 +158,11 @@ func (h *ProductHandler) Create(c *gin.Context) {
 
 	var req request.CreateProductRequest
 	if err := decodeProductJSON(c.Request.Body, &req); err != nil {
-		h.logDecodeFailure(ctx, "CreateProduct", req)
+		status, reason := decodingFailure(err)
+		h.logDecodeFailure(ctx, "CreateProduct", reason, req)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		c.JSON(http.StatusBadRequest, apiresp.NewError(correlationID, tin, time.Now(), "invalid JSON request"))
+		c.JSON(status, apiresp.NewError(correlationID, tin, time.Now(), reason))
 		return
 	}
 
@@ -199,10 +202,11 @@ func (h *ProductHandler) Update(c *gin.Context) {
 
 	var req request.UpdateProductRequest
 	if err := decodeProductJSON(c.Request.Body, &req); err != nil {
-		h.logDecodeFailure(ctx, "UpdateProduct", req)
+		status, reason := decodingFailure(err)
+		h.logDecodeFailure(ctx, "UpdateProduct", reason, req)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		c.JSON(http.StatusBadRequest, apiresp.NewError(correlationID, tin, time.Now(), "invalid JSON request"))
+		c.JSON(status, apiresp.NewError(correlationID, tin, time.Now(), reason))
 		return
 	}
 
@@ -223,16 +227,27 @@ func decodeProductJSON(body io.Reader, target any) error {
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return err
+		}
 		return errors.New("request must contain exactly one JSON value")
 	}
 	return nil
 }
 
-func (h *ProductHandler) logDecodeFailure(ctx context.Context, operation string, input any) {
+func decodingFailure(err error) (int, string) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return http.StatusRequestEntityTooLarge, "request_body_too_large"
+	}
+	return http.StatusBadRequest, "invalid_json"
+}
+
+func (h *ProductHandler) logDecodeFailure(ctx context.Context, operation, reason string, input any) {
 	log := pkglogger.FromContext(ctx, h.log).With(zap.String("operation", operation))
-	log.Warn("request decoding rejected", zap.String("reason", "invalid_json"))
+	log.Warn("request decoding rejected", zap.String("reason", reason))
 	pkglogger.DebugPayload(log, "request decoding input", "request", input)
-	pkglogger.DebugPayload(log, "request decoding response", "response", map[string]any{"error": "invalid_json"})
+	pkglogger.DebugPayload(log, "request decoding response", "response", map[string]any{"error": reason})
 }
 
 // Delete deletes a product by ID.

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/boilerplate/microservice-boilerplate/api/http/v1/middleware"
 	"github.com/boilerplate/microservice-boilerplate/api/http/v1/route"
 	producthttp "github.com/boilerplate/microservice-boilerplate/internal/product/delivery/http"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
@@ -60,5 +61,48 @@ func TestCreateSeparatesJSONDecodingFromBusinessValidation(t *testing.T) {
 				t.Fatal("missing decoding failure logs")
 			}
 		})
+	}
+}
+
+func TestCreateRejectsOversizedBodies(t *testing.T) {
+	limit := int(middleware.MaxRequestBodyBytes)
+	for _, body := range []string{
+		`{"name":"Widget","price":1,"description":"` + strings.Repeat("x", limit) + `"}`,
+		`{"name":"Widget","price":1}` + strings.Repeat(" ", limit),
+	} {
+		create := &validatingCreate{}
+		handler := producthttp.NewProductHandler(nil, nil, create, nil, nil, zap.NewNop())
+		router := route.NewRouter(handler, zap.NewNop(), "test", route.Options{RequestTimeout: time.Second})
+		incoming := httptest.NewRequest(http.MethodPost, "/api/v1/products", strings.NewReader(body))
+		incoming.ContentLength = -1
+		out := httptest.NewRecorder()
+		router.ServeHTTP(out, incoming)
+		if out.Code != http.StatusRequestEntityTooLarge || create.calls != 0 {
+			t.Fatalf("status=%d calls=%d, want 413 without executing use case", out.Code, create.calls)
+		}
+	}
+}
+
+func TestCreateAcceptsBodyAtLimit(t *testing.T) {
+	body := `{"name":"Widget","price":1}`
+	body += strings.Repeat(" ", int(middleware.MaxRequestBodyBytes)-len(body))
+	create := &validatingCreate{}
+	handler := producthttp.NewProductHandler(nil, nil, create, nil, nil, zap.NewNop())
+	router := route.NewRouter(handler, zap.NewNop(), "test", route.Options{RequestTimeout: time.Second})
+	out := httptest.NewRecorder()
+	router.ServeHTTP(out, httptest.NewRequest(http.MethodPost, "/api/v1/products", strings.NewReader(body)))
+	if out.Code != http.StatusCreated || create.calls != 1 {
+		t.Fatalf("status=%d calls=%d, want 201", out.Code, create.calls)
+	}
+}
+
+func TestUpdateRejectsOversizedBody(t *testing.T) {
+	body := `{"description":"` + strings.Repeat("x", int(middleware.MaxRequestBodyBytes)) + `"}`
+	handler := producthttp.NewProductHandler(nil, nil, nil, nil, nil, zap.NewNop())
+	router := route.NewRouter(handler, zap.NewNop(), "test", route.Options{RequestTimeout: time.Second})
+	out := httptest.NewRecorder()
+	router.ServeHTTP(out, httptest.NewRequest(http.MethodPut, "/api/v1/products/product-1", strings.NewReader(body)))
+	if out.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status=%d, want 413 before use case execution", out.Code)
 	}
 }

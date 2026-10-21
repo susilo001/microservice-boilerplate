@@ -15,6 +15,7 @@ import (
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/repository"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/response"
+	pkgevent "github.com/boilerplate/microservice-boilerplate/pkg/event"
 	pkglogger "github.com/boilerplate/microservice-boilerplate/pkg/logger"
 )
 
@@ -26,11 +27,11 @@ type CreateProductUseCase interface {
 
 type createProductUseCase struct {
 	repo      repository.ProductRepository
-	publisher event.Publisher
+	publisher pkgevent.Publisher
 	log       *zap.Logger
 }
 
-func NewCreateProductUseCase(repo repository.ProductRepository, publisher event.Publisher, log *zap.Logger) CreateProductUseCase {
+func NewCreateProductUseCase(repo repository.ProductRepository, publisher pkgevent.Publisher, log *zap.Logger) CreateProductUseCase {
 	return &createProductUseCase{repo: repo, publisher: publisher, log: log}
 }
 
@@ -41,21 +42,16 @@ func (uc *createProductUseCase) Execute(ctx context.Context, req request.CreateP
 		Component: "product.usecase", Name: "CreateProduct",
 	}, req)
 	defer func() { operation.Finish(res, err) }()
-	if err := entity.ValidateProduct(req.Name, req.Price, req.Stock); err != nil {
+	product, err := entity.NewProduct(uuid.NewString(), entity.ProductDetails{
+		Name: req.Name, Description: req.Description, Price: req.Price, Stock: req.Stock,
+	})
+	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 
 	operation.Debug("business validation passed")
-	product := &entity.Product{
-		ID:          uuid.New().String(),
-		Name:        req.Name,
-		Description: req.Description,
-		Price:       req.Price,
-		Stock:       req.Stock,
-	}
-
 	if err := uc.repo.Create(ctx, product); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())

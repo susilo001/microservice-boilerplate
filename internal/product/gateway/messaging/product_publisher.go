@@ -16,7 +16,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
-	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/event"
+	"github.com/boilerplate/microservice-boilerplate/pkg/event"
 	pkglogger "github.com/boilerplate/microservice-boilerplate/pkg/logger"
 	"github.com/boilerplate/microservice-boilerplate/pkg/retry"
 )

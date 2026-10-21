@@ -10,7 +10,6 @@ import (
 type ProductRepository interface {
 	Create(ctx context.Context, product *entity.Product) error
 	FindByID(ctx context.Context, id string) (*entity.Product, error)
-	FindByIDForUpdate(ctx context.Context, id string) (*entity.Product, error)
 	FindAll(ctx context.Context) ([]entity.Product, error)
 	FindAllPaginated(ctx context.Context, params request.ListProductsRequest) ([]entity.Product, int64, error)
 	Update(ctx context.Context, product *entity.Product) error

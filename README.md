@@ -4,6 +4,9 @@ A Go microservice baseline built on Clean Architecture with a product CRUD refer
 
 The product domain is the reference implementation: standard CRUD with Redis caching and Kafka event publishing on writes (GORM).
 
+Shared event and publisher contracts live in `pkg/event`; product event payloads
+remain in `internal/product/domain/event`.
+
 ## Stack
 
 | Concern | Library |
@@ -258,6 +261,46 @@ database access; a failed invalidation can leave stale data until the cache TTL.
 The product cache adapter owns the five-minute data TTL; use cases do not choose
 expiration or pass a TTL when filling the cache.
 This is an availability-oriented cache, not a strongly consistent read model.
+
+Concurrent cache misses for the same product share one database load per process.
+Each caller can cancel its own wait; cancellation does not abort another caller's
+load. Shared loads have an independent two-second timeout and recheck the cache
+before reading the database. This reduces hot-key stampedes within one instance,
+not across the whole deployment.
+
+### Request and query limits
+
+JSON requests are limited to 1 MiB, including trailing data, and oversized bodies
+return `413`. List queries allow at most 100 items per page and an offset of
+100,000; malformed, negative, or excessive pagination returns `400`. The same
+limits are enforced when a list use case is called outside HTTP. Zero-valued
+pagination in a direct Go request selects the defaults (page 1, size 20).
+
+Product lists default to `id asc`. Explicit sorts append `id asc` as a unique
+tie-breaker. New modules declare their unique pagination column through the
+compile-time `sortkey` tag. Offset pagination is not snapshot isolation: concurrent
+writes can still shift pages. Use cursor pagination for large or fast-changing
+datasets. Product has no relations, so any requested preload is rejected.
+
+### Extending business workflows
+
+Use `entity.NewProduct` and `Product.ChangeDetails` to validate construction and
+mutation before changing state. Persistence fields remain exported for GORM;
+new application code must not bypass domain methods for business mutations.
+Repository `FindByID` reads the primary but does not lock rows; updates retain
+their optimistic version check.
+
+Multi-record workflows require a concrete transactional repository operation
+or a transaction runner that binds all participating repositories to one database
+transaction. Do not expose GORM transactions to use cases. This CRUD reference
+does not invent inventory reservation, payment, or saga workflows.
+
+Create commands are not idempotent across HTTP retries. Before using this pattern
+for commands that must not execute twice, define an idempotency key scope and
+retention policy, then persist the key, request fingerprint, and result atomically
+with the business write. An in-memory map does not provide this guarantee across
+restarts or replicas. Best-effort Kafka publishing remains unchanged; guaranteed
+downstream processing requires durable delivery and idempotent consumers.
 
 `DB_AUTO_MIGRATE` defaults to `false`. The example environment enables it for
 local development. Production deployments should apply reviewed, versioned

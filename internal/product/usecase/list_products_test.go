@@ -61,6 +61,21 @@ func TestListProductsUseCase_Execute(t *testing.T) {
 			req:     request.ListProductsRequest{Page: 1, PageSize: 20, Filters: []string{"id:eq:1"}},
 			wantErr: queryutil.ErrInvalidQuery,
 		},
+		{
+			name:    "rejects excessive page size outside HTTP",
+			req:     request.ListProductsRequest{PageSize: 101},
+			wantErr: queryutil.ErrInvalidQuery,
+		},
+		{
+			name:    "rejects excessive offset outside HTTP",
+			req:     request.ListProductsRequest{Page: 1002, PageSize: 100},
+			wantErr: queryutil.ErrInvalidQuery,
+		},
+		{
+			name:    "rejects preloads when no relations exist",
+			req:     request.ListProductsRequest{Preload: []string{"Category"}},
+			wantErr: queryutil.ErrInvalidQuery,
+		},
 	}
 
 	for _, tt := range tests {

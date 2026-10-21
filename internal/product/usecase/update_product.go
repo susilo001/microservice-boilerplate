@@ -15,6 +15,7 @@ import (
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/repository"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/response"
+	pkgevent "github.com/boilerplate/microservice-boilerplate/pkg/event"
 	pkglogger "github.com/boilerplate/microservice-boilerplate/pkg/logger"
 	"github.com/boilerplate/microservice-boilerplate/pkg/validation"
 )
@@ -28,14 +29,14 @@ type UpdateProductUseCase interface {
 type updateProductUseCase struct {
 	repo      repository.ProductRepository
 	cache     repository.ProductCache
-	publisher event.Publisher
+	publisher pkgevent.Publisher
 	log       *zap.Logger
 }
 
 func NewUpdateProductUseCase(
 	repo repository.ProductRepository,
 	cache repository.ProductCache,
-	publisher event.Publisher,
+	publisher pkgevent.Publisher,
 	log *zap.Logger,
 ) UpdateProductUseCase {
 	return &updateProductUseCase{repo: repo, cache: cache, publisher: publisher, log: log}
@@ -59,17 +60,20 @@ func (uc *updateProductUseCase) Execute(ctx context.Context, id string, req requ
 	}
 
 	operation.Debug("business validation passed")
-	product, err := uc.repo.FindByIDForUpdate(ctx, id)
+	product, err := uc.repo.FindByID(ctx, id)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("find product for update: %w", err)
 	}
 
-	product.Name = req.Name
-	product.Description = req.Description
-	product.Price = req.Price
-	product.Stock = req.Stock
+	if err := product.ChangeDetails(entity.ProductDetails{
+		Name: req.Name, Description: req.Description, Price: req.Price, Stock: req.Stock,
+	}); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
 
 	if err := uc.repo.Update(ctx, product); err != nil {
 		span.RecordError(err)

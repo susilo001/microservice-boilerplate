@@ -73,13 +73,13 @@ docs/                                # Generated Swagger
 
 ### `domain/`
 - Plain Go structs — GORM model tags allowed on entities used by GORM-backed domains
-- Event structs + `Publisher` interface
+- Module-specific event structs; shared `Event` and `Publisher` contracts live in `pkg/event`
 - Repository + cache interfaces (contracts only, no implementations)
 - **Zero imports from any other internal layer, zero external framework imports**
 
 ### `usecase/`
 - Interface + implementation for every use case
-- Depends only on `domain/` interfaces — never on concrete implementations
+- Depends on `domain/` interfaces and shared `pkg/event` contracts — never on concrete implementations
 - Propagates `context.Context` to all I/O calls
 - Creates OTel spans (`otel.Tracer("<domain>/usecase").Start(...)`)
 - Inject a logger for instrumentation. Business rules belong in domain methods
@@ -132,7 +132,7 @@ RequestTimer → CorrelationID → otelgin → TraceContext → Logger → Error
 Updates use explicit columns, ID plus version, and affected-row checks.
 Never use GORM Save for an existing-record update: its insert fallback may
 recreate a deleted product. Zero-valued fields must remain writable.
-`FindByIDForUpdate` selects the primary; it does not lock the row.
+`FindByID` selects the primary; it does not lock the row.
 Optimistic version checks protect the subsequent write. Transactions spanning
 multiple writes belong behind a business-specific repository contract.
 
@@ -141,6 +141,11 @@ consistent. Cache Get returns a generation token; Set requires that token and
 rejects fills after invalidation or token expiry. Delete atomically rotates
 the token and removes the data. Tokens expire after 30s; data after 5m.
 Failed invalidation can leave stale data until TTL; do not claim strong consistency.
+
+Concurrent product cache misses share a bounded database load per process.
+Caller cancellation ends only that caller's wait, not another caller's load.
+Business mutations use domain constructors and methods, not direct field writes.
+JSON request bodies are limited to 1 MiB; oversized bodies return 413.
 
 ---
 
@@ -278,6 +283,9 @@ Use a migration runner to track versions and coordinate deployers.
 
 ### Event contract
 
+Shared `Event` and `Publisher` interfaces live in `pkg/event/event.go`.
+Product event payloads stay in `internal/product/domain/event/`.
+
 ```go
 type Event interface {
     EventName() string
@@ -345,6 +353,13 @@ type Event interface {
   malformed query syntax, then pass same request to repository.
   Repository calls `BuildListParams`, `ApplySearchAndFilters`, and
   `ApplySortPreloadPage`. See product's `ListProductsRequest` for reference.
+- Enforce page-size (100) and offset (100,000) bounds in BuildListParams,
+  including direct use-case callers. Reject malformed pagination rather than
+  silently clamping it. Direct Go zero values use defaults; HTTP values must
+  satisfy their declared minimums.
+- Declare a unique compile-time `sortkey` on the sort field (product uses `id`).
+  It supplies default ordering and a tie-breaker for explicit sorts. Offset
+  pagination is not a consistent snapshot during concurrent writes.
 - Tags form fixed allow-lists for SQL identifiers and value types:
   `search:"name,description"`, `sort:"name,price"`,
   `preload:"Category"`, and
