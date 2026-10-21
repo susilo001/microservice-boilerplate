@@ -35,6 +35,8 @@ func TestValidate(t *testing.T) {
 		change func(*Config)
 	}{
 		{"invalid port", func(cfg *Config) { cfg.AppPort = "0" }},
+		{"invalid log level", func(cfg *Config) { cfg.Log.Level = "fatal" }},
+		{"invalid log format", func(cfg *Config) { cfg.Log.Format = "typo" }},
 		{"invalid timeout", func(cfg *Config) { cfg.HTTPRequestTimeout = 0 }},
 		{"deadline longer than socket timeout", func(cfg *Config) { cfg.HTTPRequestTimeout = time.Minute }},
 		{"nested Redis retries", func(cfg *Config) { cfg.Redis.MaxRetries = 3 }},

@@ -8,11 +8,15 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.uber.org/zap"
 
+	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/event"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/repository"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/response"
+	pkglogger "github.com/boilerplate/microservice-boilerplate/pkg/logger"
+	"github.com/boilerplate/microservice-boilerplate/pkg/validation"
 )
 
 var updateTracer = otel.Tracer("product/usecase")
@@ -25,21 +29,36 @@ type updateProductUseCase struct {
 	repo      repository.ProductRepository
 	cache     repository.ProductCache
 	publisher event.Publisher
+	log       *zap.Logger
 }
 
 func NewUpdateProductUseCase(
 	repo repository.ProductRepository,
 	cache repository.ProductCache,
 	publisher event.Publisher,
+	log *zap.Logger,
 ) UpdateProductUseCase {
-	return &updateProductUseCase{repo: repo, cache: cache, publisher: publisher}
+	return &updateProductUseCase{repo: repo, cache: cache, publisher: publisher, log: log}
 }
 
-func (uc *updateProductUseCase) Execute(ctx context.Context, id string, req request.UpdateProductRequest) (*response.ProductResponse, error) {
+func (uc *updateProductUseCase) Execute(ctx context.Context, id string, req request.UpdateProductRequest) (res *response.ProductResponse, err error) {
 	ctx, span := updateTracer.Start(ctx, "product.usecase.UpdateProduct")
 	defer span.End()
 	span.SetAttributes(attribute.String("product.id", id))
+	operation := pkglogger.StartOperation(ctx, uc.log, pkglogger.OperationConfig{Component: "product.usecase", Name: "UpdateProduct"}, map[string]any{"id": id, "product": req})
+	defer func() { operation.Finish(res, err) }()
+	if err := validation.Required("id", id, entity.ErrInvalidProduct); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	if err := entity.ValidateProduct(req.Name, req.Price, req.Stock); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
 
+	operation.Debug("business validation passed")
 	product, err := uc.repo.FindByIDForUpdate(ctx, id)
 	if err != nil {
 		span.RecordError(err)
@@ -58,7 +77,9 @@ func (uc *updateProductUseCase) Execute(ctx context.Context, id string, req requ
 		return nil, fmt.Errorf("update product: %w", err)
 	}
 
-	_ = uc.cache.Delete(ctx, id)
+	if err := uc.cache.Delete(ctx, id); err != nil {
+		operation.Degrade("cache")
+	}
 
 	evt := event.ProductUpdatedEvent{
 		EventID:       uuid.NewString(),
@@ -71,7 +92,11 @@ func (uc *updateProductUseCase) Execute(ctx context.Context, id string, req requ
 		Stock:         product.Stock,
 		UpdatedAt:     product.UpdatedAt,
 	}
-	_ = uc.publisher.Publish(ctx, evt)
+	if err := uc.publisher.Publish(ctx, evt); err != nil {
+		operation.Degrade("publisher")
+	}
 
-	return response.FromEntity(product), nil
+	res = response.FromEntity(product)
+	operation.Succeed()
+	return res, nil
 }

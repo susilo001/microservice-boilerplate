@@ -16,6 +16,7 @@ import (
 	apiresp "github.com/boilerplate/microservice-boilerplate/api/http/v1/response"
 	producthttp "github.com/boilerplate/microservice-boilerplate/internal/product/delivery/http"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
+	pkglogger "github.com/boilerplate/microservice-boilerplate/pkg/logger"
 	"github.com/boilerplate/microservice-boilerplate/pkg/queryutil"
 )
 
@@ -31,8 +32,8 @@ func NewRouter(handler *producthttp.ProductHandler, log *zap.Logger, serviceName
 	r.Use(otelgin.Middleware(serviceName))
 	r.Use(apimw.TraceContext())
 	r.Use(apimw.Logger(log))
-	r.Use(gin.CustomRecovery(func(c *gin.Context, recovered any) {
-		log.Error("request panic", zap.Any("panic", recovered), zap.String("correlationid", c.GetString("correlationid")))
+	r.Use(gin.CustomRecoveryWithWriter(nil, func(c *gin.Context, recovered any) {
+		pkglogger.FromContext(c.Request.Context(), log).Error("request panic", zap.Any("panic", recovered), zap.Stack("panic_stack"))
 		c.AbortWithStatusJSON(http.StatusInternalServerError, apiresp.NewError(
 			c.GetString("correlationid"), apiresp.ContextTime(c, "tin"), time.Now(), "Internal Server Error"))
 	}))
@@ -47,7 +48,7 @@ func NewRouter(handler *producthttp.ProductHandler, log *zap.Logger, serviceName
 		if errors.Is(err, context.DeadlineExceeded) {
 			return http.StatusGatewayTimeout
 		}
-		if errors.Is(err, entity.ErrInvalidSortField) || errors.Is(err, entity.ErrInvalidPreload) || errors.Is(err, queryutil.ErrInvalidQuery) {
+		if errors.Is(err, entity.ErrInvalidProduct) || errors.Is(err, entity.ErrInvalidSortField) || errors.Is(err, entity.ErrInvalidPreload) || errors.Is(err, queryutil.ErrInvalidQuery) {
 			return http.StatusBadRequest
 		}
 		return http.StatusInternalServerError
@@ -66,7 +67,7 @@ func NewRouter(handler *producthttp.ProductHandler, log *zap.Logger, serviceName
 			return
 		}
 		if err := options.Ready(ctx); err != nil {
-			log.Warn("readiness check failed", zap.Error(err))
+			pkglogger.FromContext(c.Request.Context(), log).Warn("readiness check failed", zap.Error(err))
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready"})
 			return
 		}

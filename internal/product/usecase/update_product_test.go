@@ -3,11 +3,12 @@ package usecase_test
 import (
 	"context"
 	"errors"
+	"go.uber.org/zap"
 	"testing"
 
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
-	"github.com/boilerplate/microservice-boilerplate/internal/product/usecase"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
+	"github.com/boilerplate/microservice-boilerplate/internal/product/usecase"
 )
 
 func TestUpdateProductUseCase_Execute(t *testing.T) {
@@ -61,7 +62,7 @@ func TestUpdateProductUseCase_Execute(t *testing.T) {
 			}
 			repo.updateErr = tt.updateErr
 			publisher := &mockPublisher{}
-			uc := usecase.NewUpdateProductUseCase(repo, &mockProductCache{}, publisher)
+			uc := usecase.NewUpdateProductUseCase(repo, &mockProductCache{}, publisher, zap.NewNop())
 
 			res, err := uc.Execute(context.Background(), tt.id, tt.req)
 

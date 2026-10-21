@@ -103,12 +103,85 @@ Copy `.env.example` to `.env` — Viper loads it automatically on startup.
 |---|---|---|
 | `APP_PORT` | `8003` | HTTP server port |
 | `GIN_MODE` | `debug` | `debug` or `release` |
+| `LOG_LEVEL` | `info` | Minimum severity: `debug`, `info`, `warn`, `error` |
+| `LOG_FORMAT` | `json` | `json` for aggregation or `console` for local readability |
+| `LOG_SAMPLING` | `false` | Opt in to sampling repeated messages |
 | `HTTP_REQUEST_TIMEOUT` | `10s` | Cooperative execution deadline; shorter than HTTP write timeout |
 | `DB_AUTO_MIGRATE` | `false` | Enable only for local development; production applies migrations separately |
 | `HTTP_READ_HEADER_TIMEOUT` | `5s` | Maximum time to read request headers |
 | `HTTP_READ_TIMEOUT` | `15s` | Maximum time to read a request body |
 | `HTTP_WRITE_TIMEOUT` | `15s` | Maximum time to write a response |
 | `HTTP_IDLE_TIMEOUT` | `60s` | Maximum idle keep-alive duration |
+
+### Logging
+
+Both entry points use the same validated Zap configuration and write to stderr.
+For local debugging, set `LOG_LEVEL=debug` and `LOG_FORMAT=console`.
+`GIN_MODE` controls Gin's framework diagnostics independently; use
+`GIN_MODE=release` for production. Console output does not enable Zap's
+development panic behavior.
+
+Request logs use Info for successful responses, Warn for 4xx and Error for 5xx.
+Successful health/readiness probes use Debug. Adapter failures emit one warning
+after retries, preserving trace/span IDs and correlation ID; recovered panics
+emit a structured error with a stack, without dumping request headers or bodies.
+The subsequent request summary still records the 500 response.
+
+Logs include the entry point's service name. Sampling is disabled by default
+so qualifying access/error entries are retained. If enabled, repeated messages
+at the same level are sampled using Zap's production policy (first 100 per
+second, then every 100th). Sampling affects warnings and errors too; use metrics
+for counts and do not treat sampled logs as an audit trail. Level filtering
+always applies regardless of sampling.
+
+Application code should use Debug for diagnostics, Info for normal lifecycle,
+Warn for recoverable degradation and Error for failed operations. Return errors
+through the entry point so cleanup executes before exit; avoid Fatal, Panic and
+DPanic in routine application code.
+
+All product use cases also log business outcomes independently of HTTP. Success
+uses Info; validation, not-found, conflict, cancellation and deadline rejections
+use Warn; unexpected failures use Error. A committed operation with a failed
+optional cache/publisher step completes with a Warn-level degraded outcome.
+Adapter diagnostics and HTTP summaries remain separate records.
+
+With `LOG_LEVEL=debug`, each use case emits typed request and response snapshots:
+
+```json
+{"level":"debug","msg":"operation request","component":"product.usecase","operation":"CreateProduct","request":{"name":"Widget","description":"[REDACTED]","price":0,"stock":1}}
+{"level":"warn","msg":"operation rejected","component":"product.usecase","operation":"CreateProduct","outcome":"rejected","reason":"invalid_product","validation_field":"price","validation_rule":"finite_positive"}
+{"level":"debug","msg":"operation response","component":"product.usecase","operation":"CreateProduct","response":{"error":"invalid_product"}}
+```
+
+Examples omit timestamps, service identity and trace/correlation fields for
+brevity. These snapshots represent use-case input/output, not the complete HTTP
+response envelope. Malformed JSON gets transport-level rejection logs with
+partial typed input; raw malformed bytes and request headers are never dumped.
+
+The shared sanitizer masks known sensitive keys (passwords, tokens, credentials,
+cookies and selected personal/payment fields) and product descriptions.
+Payloads over 16KiB are omitted with a reason; nesting is capped at eight levels
+and arrays at 20 items. Serialization happens only when Debug logging is enabled.
+Key-based masking cannot detect secrets inside arbitrary strings; review new
+DTO fields and extend the sanitizer before logging sensitive domains. Keep
+production at Info unless Debug payload visibility is explicitly needed.
+
+Product name, finite positive price and non-negative stock are validated in
+the domain from create/update use cases. HTTP decodes JSON before invoking those
+use cases, so workers and other transports enforce the same business rules.
+
+Reusable operation logging lives in `pkg/logger/operation.go`. Any module
+can call `StartOperation` with its component and operation names. Shared error
+classification lives in `pkg/apperror`; modules declare expected errors with stable
+codes and messages, without a use-case classifier. Required-string validation and
+structured field/rule errors live in `pkg/validation`, including required IDs.
+Product-specific constraints (price and stock) and error codes remain in the domain.
+The shared logger imports no product or other internal packages.
+
+Defer `Finish` through a closure so it observes the final response and error.
+Call `Succeed` after constructing a successful response; `Degrade` records optional
+dependency failures. If execution unwinds before success without a returned error,
+the helper logs an interrupted operation rather than a false success.
 
 ### Database
 
@@ -182,6 +255,8 @@ Invalidation atomically rotates that token and removes cached data; a stale
 fill is rejected. Generation tokens expire after 30s, and fills with expired
 tokens are rejected. Cached products expire after 5m. Redis failures still permit
 database access; a failed invalidation can leave stale data until the cache TTL.
+The product cache adapter owns the five-minute data TTL; use cases do not choose
+expiration or pass a TTL when filling the cache.
 This is an availability-oriented cache, not a strongly consistent read model.
 
 `DB_AUTO_MIGRATE` defaults to `false`. The example environment enables it for

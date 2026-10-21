@@ -13,11 +13,14 @@ import (
 )
 
 type mockProductRepository struct {
-	products  map[string]*entity.Product
-	createErr error
-	findErr   error
-	updateErr error
-	deleteErr error
+	products    map[string]*entity.Product
+	createErr   error
+	findErr     error
+	updateErr   error
+	deleteErr   error
+	createCalls int
+	findCalls   int
+	updateCalls int
 }
 
 func newMockRepo() *mockProductRepository {
@@ -25,6 +28,7 @@ func newMockRepo() *mockProductRepository {
 }
 
 func (m *mockProductRepository) Create(_ context.Context, p *entity.Product) error {
+	m.createCalls++
 	if m.createErr != nil {
 		return m.createErr
 	}
@@ -35,6 +39,7 @@ func (m *mockProductRepository) Create(_ context.Context, p *entity.Product) err
 }
 
 func (m *mockProductRepository) FindByID(_ context.Context, id string) (*entity.Product, error) {
+	m.findCalls++
 	if m.findErr != nil {
 		return nil, m.findErr
 	}
@@ -148,6 +153,7 @@ func matchesFilter(actual any, op string, want any) bool {
 }
 
 func (m *mockProductRepository) Update(_ context.Context, p *entity.Product) error {
+	m.updateCalls++
 	if m.updateErr != nil {
 		return m.updateErr
 	}
@@ -167,25 +173,31 @@ func (m *mockProductRepository) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-type mockProductCache struct{}
-
-func (m *mockProductCache) Get(_ context.Context, _ string) (*entity.Product, string, error) {
-	return nil, "generation", nil
+type mockProductCache struct {
+	product   *entity.Product
+	getErr    error
+	setErr    error
+	deleteErr error
 }
 
-func (m *mockProductCache) Set(_ context.Context, _ *entity.Product, _ time.Duration, _ string) error {
-	return nil
+func (m *mockProductCache) Get(_ context.Context, _ string) (*entity.Product, string, error) {
+	return m.product, "generation", m.getErr
+}
+
+func (m *mockProductCache) Set(_ context.Context, _ *entity.Product, _ string) error {
+	return m.setErr
 }
 
 func (m *mockProductCache) Delete(_ context.Context, _ string) error {
-	return nil
+	return m.deleteErr
 }
 
 type mockPublisher struct {
 	published []domainEvent.Event
+	err       error
 }
 
 func (m *mockPublisher) Publish(_ context.Context, e domainEvent.Event) error {
 	m.published = append(m.published, e)
-	return nil
+	return m.err
 }

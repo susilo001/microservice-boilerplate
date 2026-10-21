@@ -3,6 +3,7 @@ package middleware
 import (
 	"time"
 
+	pkglogger "github.com/boilerplate/microservice-boilerplate/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -16,6 +17,7 @@ func CorrelationID() gin.HandlerFunc {
 			id = uuid.New().String()
 		}
 		c.Set("correlationid", id)
+		c.Request = c.Request.WithContext(pkglogger.WithCorrelationID(c.Request.Context(), id))
 		c.Header("X-Correlation-ID", id)
 		c.Next()
 	}

@@ -39,24 +39,27 @@ import (
 // @host            localhost:8003
 // @BasePath        /
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	cfg := config.Load()
+	logger, err := pkglogger.NewLogger(cfg.Log)
+	if err != nil {
+		pkglogger.ReportStartupError(err)
 		os.Exit(1)
 	}
+	logger = logger.With(zap.String("service", cfg.OTelServiceName))
+	if err := run(cfg, logger); err != nil {
+		logger.Error("application stopped", zap.Error(err))
+		_ = logger.Sync()
+		os.Exit(1)
+	}
+	_ = logger.Sync()
 }
 
-func run() error {
-	cfg := config.Load()
+func run(cfg config.Config, logger *zap.Logger) error {
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 	gin.SetMode(cfg.GinMode)
-
-	logger, err := pkglogger.NewLogger()
-	if err != nil {
-		return fmt.Errorf("init logger: %w", err)
-	}
-	defer logger.Sync() //nolint:errcheck
+	logger.Debug("configuration validated", zap.String("gin_mode", cfg.GinMode))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -132,18 +135,18 @@ func run() error {
 
 	// infrastructure — product domain
 	productRepo := repository.NewProductRepository(db)
-	productCache := cache.NewProductCache(rdb)
-	productPublisher := messaging.NewProductPublisher(kafkaWriter)
+	productCache := cache.NewProductCache(rdb, logger)
+	productPublisher := messaging.NewProductPublisher(kafkaWriter, logger)
 
 	// use cases — product domain
-	getProductUC := usecase.NewGetProductUseCase(productRepo, productCache)
-	listProductsUC := usecase.NewListProductsUseCase(productRepo)
-	createProductUC := usecase.NewCreateProductUseCase(productRepo, productPublisher)
-	updateProductUC := usecase.NewUpdateProductUseCase(productRepo, productCache, productPublisher)
-	deleteProductUC := usecase.NewDeleteProductUseCase(productRepo, productCache)
+	getProductUC := usecase.NewGetProductUseCase(productRepo, productCache, logger)
+	listProductsUC := usecase.NewListProductsUseCase(productRepo, logger)
+	createProductUC := usecase.NewCreateProductUseCase(productRepo, productPublisher, logger)
+	updateProductUC := usecase.NewUpdateProductUseCase(productRepo, productCache, productPublisher, logger)
+	deleteProductUC := usecase.NewDeleteProductUseCase(productRepo, productCache, logger)
 
 	// delivery
-	handler := producthttp.NewProductHandler(getProductUC, listProductsUC, createProductUC, updateProductUC, deleteProductUC)
+	handler := producthttp.NewProductHandler(getProductUC, listProductsUC, createProductUC, updateProductUC, deleteProductUC, logger)
 	router := apiroute.NewRouter(handler, logger, cfg.OTelServiceName, apiroute.Options{
 		RequestTimeout: cfg.HTTPRequestTimeout,
 		Ready: func(ctx context.Context) error {

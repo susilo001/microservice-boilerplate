@@ -13,25 +13,27 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
+	"go.uber.org/zap"
 
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
 	domainrepo "github.com/boilerplate/microservice-boilerplate/internal/product/domain/repository"
+	pkglogger "github.com/boilerplate/microservice-boilerplate/pkg/logger"
 	"github.com/boilerplate/microservice-boilerplate/pkg/retry"
 )
 
 var tracer = otel.Tracer("product-service/cache")
 
+const productCacheTTL = 5 * time.Minute
+
 type productCache struct {
 	client       *redis.Client
 	errorCounter metric.Int64Counter
+	log          *zap.Logger
 }
 
-func NewProductCache(client *redis.Client) domainrepo.ProductCache {
-	errorCounter, _ := otel.Meter("product-service/cache").Int64Counter(
-		"product.cache.errors",
-		metric.WithDescription("Number of product cache operation failures"),
-	)
-	return &productCache{client: client, errorCounter: errorCounter}
+func NewProductCache(client *redis.Client, log *zap.Logger) domainrepo.ProductCache {
+	errorCounter, _ := otel.Meter("product-service/cache").Int64Counter("product.cache.errors", metric.WithDescription("Number of product cache operation failures"))
+	return &productCache{client: client, errorCounter: errorCounter, log: log.With(zap.String("component", "product.cache"))}
 }
 
 // Get returns a nil product and generation token on a cache miss.
@@ -57,7 +59,7 @@ return {redis.call('GET', KEYS[1]) or '', token}
 		return getErr
 	})
 	if err != nil {
-		c.recordError(ctx, "get")
+		c.recordError(ctx, "get", err)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, "", fmt.Errorf("redis get product: %w", err)
@@ -65,14 +67,16 @@ return {redis.call('GET', KEYS[1]) or '', token}
 	val := values[0].(string)
 	generation := values[1].(string)
 	if val == "" {
+		pkglogger.FromContext(ctx, c.log).Debug("cache miss")
 		span.SetAttributes(attribute.Bool("cache.hit", false))
 		return nil, generation, nil
 	}
 
 	span.SetAttributes(attribute.Bool("cache.hit", true))
+	pkglogger.FromContext(ctx, c.log).Debug("cache hit")
 	var product entity.Product
 	if err := json.Unmarshal([]byte(val), &product); err != nil {
-		c.recordError(ctx, "get")
+		c.recordError(ctx, "get", err)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, "", fmt.Errorf("unmarshal cached product: %w", err)
@@ -80,7 +84,7 @@ return {redis.call('GET', KEYS[1]) or '', token}
 	return &product, generation, nil
 }
 
-func (c *productCache) Set(ctx context.Context, product *entity.Product, ttl time.Duration, generation string) error {
+func (c *productCache) Set(ctx context.Context, product *entity.Product, generation string) error {
 	ctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
 	ctx, span := tracer.Start(ctx, "cache.product.set")
@@ -89,13 +93,13 @@ func (c *productCache) Set(ctx context.Context, product *entity.Product, ttl tim
 
 	data, err := json.Marshal(product)
 	if err != nil {
-		c.recordError(ctx, "set")
+		c.recordError(ctx, "set", err)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("marshal product for cache: %w", err)
 	}
-	if ttl < time.Millisecond || generation == "" {
-		return errors.New("cache fill requires a positive TTL and generation")
+	if generation == "" {
+		return errors.New("cache fill requires a generation")
 	}
 	if err := retry.Do(ctx, cacheRetryPolicy(), func() error {
 		return c.client.Eval(ctx, `
@@ -104,9 +108,9 @@ if redis.call('GET', KEYS[2]) == ARGV[1] then
     return 1
 end
 return 0
-`, []string{cacheKey(product.ID), generationKey(product.ID)}, generation, data, ttl.Milliseconds()).Err()
+`, []string{cacheKey(product.ID), generationKey(product.ID)}, generation, data, productCacheTTL.Milliseconds()).Err()
 	}); err != nil {
-		c.recordError(ctx, "set")
+		c.recordError(ctx, "set", err)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return err
@@ -127,7 +131,7 @@ redis.call('SET', KEYS[2], ARGV[1], 'PX', 30000)
 return redis.call('DEL', KEYS[1])
 `, []string{cacheKey(id), generationKey(id)}, uuid.NewString()).Err()
 	}); err != nil {
-		c.recordError(ctx, "delete")
+		c.recordError(ctx, "delete", err)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return err
@@ -135,8 +139,9 @@ return redis.call('DEL', KEYS[1])
 	return nil
 }
 
-func (c *productCache) recordError(ctx context.Context, operation string) {
+func (c *productCache) recordError(ctx context.Context, operation string, err error) {
 	c.errorCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("cache.operation", operation)))
+	pkglogger.FromContext(ctx, c.log).Warn("cache operation failed", zap.String("operation", operation), zap.Error(err))
 }
 
 func cacheKey(id string) string {

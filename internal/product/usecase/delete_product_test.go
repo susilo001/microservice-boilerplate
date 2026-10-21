@@ -3,6 +3,7 @@ package usecase_test
 import (
 	"context"
 	"errors"
+	"go.uber.org/zap"
 	"testing"
 
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
@@ -50,7 +51,7 @@ func TestDeleteProductUseCase_Execute(t *testing.T) {
 				}
 			}
 			repo.deleteErr = tt.deleteErr
-			uc := usecase.NewDeleteProductUseCase(repo, &mockProductCache{})
+			uc := usecase.NewDeleteProductUseCase(repo, &mockProductCache{}, zap.NewNop())
 
 			err := uc.Execute(context.Background(), tt.id)
 

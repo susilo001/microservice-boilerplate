@@ -3,6 +3,7 @@ package usecase_test
 import (
 	"context"
 	"errors"
+	"go.uber.org/zap"
 	"testing"
 
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
@@ -68,7 +69,7 @@ func TestListProductsUseCase_Execute(t *testing.T) {
 			for _, product := range tt.seed {
 				repo.products[product.ID] = product
 			}
-			res, total, err := usecase.NewListProductsUseCase(repo).Execute(context.Background(), tt.req)
+			res, total, err := usecase.NewListProductsUseCase(repo, zap.NewNop()).Execute(context.Background(), tt.req)
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
 					t.Fatalf("Execute() error = %v, want %v", err, tt.wantErr)

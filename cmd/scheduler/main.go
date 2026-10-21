@@ -18,12 +18,25 @@ import (
 func main() {
 	cfg := config.Load()
 
-	logger, err := pkglogger.NewLogger()
+	logger, err := pkglogger.NewLogger(cfg.Log)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "init logger: %v\n", err)
+		pkglogger.ReportStartupError(err)
 		os.Exit(1)
 	}
-	defer logger.Sync() //nolint:errcheck
+	logger = logger.With(zap.String("service", cfg.OTelServiceName+"-scheduler"))
+	if err := run(cfg, logger); err != nil {
+		logger.Error("application stopped", zap.Error(err))
+		_ = logger.Sync()
+		os.Exit(1)
+	}
+	_ = logger.Sync()
+}
+
+func run(cfg config.Config, logger *zap.Logger) error {
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+	logger.Debug("configuration validated")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -31,7 +44,7 @@ func main() {
 	// telemetry — must shut down last
 	otelShutdown, err := telemetry.InitProvider(ctx, cfg.OTelServiceName+"-scheduler")
 	if err != nil {
-		logger.Fatal("init otel", zap.Error(err))
+		return fmt.Errorf("init otel: %w", err)
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -51,4 +64,5 @@ func main() {
 	logger.Info("scheduler started")
 	<-ctx.Done()
 	logger.Info("scheduler shutting down")
+	return nil
 }

@@ -1,6 +1,7 @@
 package route
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestHTTPFailureContracts(t *testing.T) {
@@ -47,5 +49,38 @@ func TestHTTPFailureContracts(t *testing.T) {
 				t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestPanicLoggingUsesStructuredOutputWithoutRequestHeaders(t *testing.T) {
+	var frameworkOutput bytes.Buffer
+	previousWriter := gin.DefaultErrorWriter
+	gin.DefaultErrorWriter = &frameworkOutput
+	t.Cleanup(func() { gin.DefaultErrorWriter = previousWriter })
+	core, entries := observer.New(zap.DebugLevel)
+	router := NewRouter(nil, zap.New(core), "test", Options{RequestTimeout: time.Second})
+	router.GET("/panic-log", func(ctx *gin.Context) { panic("test panic") })
+	request := httptest.NewRequest(http.MethodGet, "/panic-log", nil)
+	request.Header.Set("Cookie", "session=secret-value")
+	request.Header.Set("X-Correlation-ID", "panic-request")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusInternalServerError || frameworkOutput.Len() != 0 {
+		t.Fatalf("unexpected panic response or framework output: %d %s", response.Code, frameworkOutput.String())
+	}
+	panics := entries.FilterMessage("request panic").All()
+	if len(panics) != 1 || panics[0].Level != zap.ErrorLevel {
+		t.Fatalf("expected one structured panic diagnostic: %+v", panics)
+	}
+	fields := panics[0].ContextMap()
+	if fields["correlationid"] != "panic-request" || fields["panic_stack"] == "" {
+		t.Fatalf("missing panic context: %v", fields)
+	}
+	for _, entry := range entries.All() {
+		for _, field := range entry.Context {
+			if strings.Contains(field.String, "secret-value") {
+				t.Fatal("request header leaked into logs")
+			}
+		}
 	}
 }

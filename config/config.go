@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	pkglogger "github.com/boilerplate/microservice-boilerplate/pkg/logger"
 	pkgviper "github.com/boilerplate/microservice-boilerplate/pkg/viper"
 )
 
@@ -18,6 +19,7 @@ type Config struct {
 	HTTPIdleTimeout       time.Duration
 	HTTPRequestTimeout    time.Duration
 	DBAutoMigrate         bool
+	Log                   pkglogger.Config
 
 	DB    DBConfig
 	Redis RedisConfig
@@ -69,6 +71,9 @@ func Load() Config {
 	v.SetDefault("HTTP_IDLE_TIMEOUT", "60s")
 	v.SetDefault("HTTP_REQUEST_TIMEOUT", "10s")
 	v.SetDefault("DB_AUTO_MIGRATE", false)
+	v.SetDefault("LOG_LEVEL", "info")
+	v.SetDefault("LOG_FORMAT", "json")
+	v.SetDefault("LOG_SAMPLING", false)
 
 	// Database
 	v.SetDefault("DB_DRIVER", "postgres")
@@ -107,6 +112,11 @@ func Load() Config {
 		HTTPIdleTimeout:       v.GetDuration("HTTP_IDLE_TIMEOUT"),
 		HTTPRequestTimeout:    v.GetDuration("HTTP_REQUEST_TIMEOUT"),
 		DBAutoMigrate:         v.GetBool("DB_AUTO_MIGRATE"),
+		Log: pkglogger.Config{
+			Level:    v.GetString("LOG_LEVEL"),
+			Format:   v.GetString("LOG_FORMAT"),
+			Sampling: v.GetBool("LOG_SAMPLING"),
+		},
 
 		DB: DBConfig{
 			Driver:          v.GetString("DB_DRIVER"),
@@ -155,6 +165,9 @@ func splitCSV(value string) []string {
 }
 
 func (cfg Config) Validate() error {
+	if err := cfg.Log.Validate(); err != nil {
+		return err
+	}
 	port, err := strconv.Atoi(cfg.AppPort)
 	if err != nil || port < 1 || port > 65535 {
 		return fmt.Errorf("APP_PORT must be between 1 and 65535")

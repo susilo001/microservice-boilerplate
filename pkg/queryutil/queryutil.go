@@ -3,17 +3,17 @@
 package queryutil
 
 import (
-	"errors"
 	"fmt"
 	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
 
+	"github.com/boilerplate/microservice-boilerplate/pkg/apperror"
 	"gorm.io/gorm"
 )
 
-var ErrInvalidQuery = errors.New("invalid list query")
+var ErrInvalidQuery = &apperror.Error{Code: "invalid_query", Message: "invalid list query"}
 
 type Filter struct {
 	Column string

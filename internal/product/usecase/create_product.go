@@ -8,12 +8,14 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.uber.org/zap"
 
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/event"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/repository"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/response"
+	pkglogger "github.com/boilerplate/microservice-boilerplate/pkg/logger"
 )
 
 var createTracer = otel.Tracer("product/usecase")
@@ -25,16 +27,27 @@ type CreateProductUseCase interface {
 type createProductUseCase struct {
 	repo      repository.ProductRepository
 	publisher event.Publisher
+	log       *zap.Logger
 }
 
-func NewCreateProductUseCase(repo repository.ProductRepository, publisher event.Publisher) CreateProductUseCase {
-	return &createProductUseCase{repo: repo, publisher: publisher}
+func NewCreateProductUseCase(repo repository.ProductRepository, publisher event.Publisher, log *zap.Logger) CreateProductUseCase {
+	return &createProductUseCase{repo: repo, publisher: publisher, log: log}
 }
 
-func (uc *createProductUseCase) Execute(ctx context.Context, req request.CreateProductRequest) (*response.ProductResponse, error) {
+func (uc *createProductUseCase) Execute(ctx context.Context, req request.CreateProductRequest) (res *response.ProductResponse, err error) {
 	ctx, span := createTracer.Start(ctx, "product.usecase.CreateProduct")
 	defer span.End()
+	operation := pkglogger.StartOperation(ctx, uc.log, pkglogger.OperationConfig{
+		Component: "product.usecase", Name: "CreateProduct",
+	}, req)
+	defer func() { operation.Finish(res, err) }()
+	if err := entity.ValidateProduct(req.Name, req.Price, req.Stock); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
 
+	operation.Debug("business validation passed")
 	product := &entity.Product{
 		ID:          uuid.New().String(),
 		Name:        req.Name,
@@ -63,7 +76,11 @@ func (uc *createProductUseCase) Execute(ctx context.Context, req request.CreateP
 		CreatedAt:     product.CreatedAt,
 	}
 	// non-fatal: publish failure does not roll back the create
-	_ = uc.publisher.Publish(ctx, evt)
+	if err := uc.publisher.Publish(ctx, evt); err != nil {
+		operation.Degrade("publisher")
+	}
 
-	return response.FromEntity(product), nil
+	res = response.FromEntity(product)
+	operation.Succeed()
+	return res, nil
 }

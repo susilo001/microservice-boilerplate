@@ -82,6 +82,9 @@ docs/                                # Generated Swagger
 - Depends only on `domain/` interfaces — never on concrete implementations
 - Propagates `context.Context` to all I/O calls
 - Creates OTel spans (`otel.Tracer("<domain>/usecase").Start(...)`)
+- Inject a logger for instrumentation. Business rules belong in domain methods
+  and must run even for callers outside HTTP. Use-case instrumentation may use
+  pkg/logger and Zap; provider clients still stay in adapters.
 
 ### `repository/`
 - **Product domain**: only layer allowed to import `gorm`. Creates OTel spans
@@ -160,6 +163,45 @@ pkg/*                           → nothing internal
 ---
 
 ## Observability (OpenTelemetry)
+
+### Logging
+
+Use the injected Zap logger with LOG_LEVEL (debug/info/warn/error), LOG_FORMAT
+(json/console) and explicit LOG_SAMPLING (default false). Gin mode does not
+control Zap severity; console format does not enable development panics.
+Successful requests log Info, 4xx Warn, 5xx Error. Successful health probes
+log Debug. Sampling, when enabled, may drop repeated warnings and errors too.
+Use metrics for failure counts.
+
+Use pkg/logger.FromContext to preserve trace/span and correlation IDs in
+adapter logs. Log one terminal warning for cache/publish failures after retries.
+Do not log raw request headers/bodies, credentials or complete configuration.
+Explicitly authorized typed request/response snapshots use pkg/logger.DebugPayload
+at Debug only. It masks known sensitive keys and product descriptions, omits
+payloads over 16KiB, caps nesting at eight levels and arrays at 20 items.
+Key-based redaction cannot detect secrets embedded in arbitrary string values;
+review new DTO fields before logging them. Never bypass the sanitizer.
+Panic recovery uses structured errors and a stack; disable Gin's additional
+plain-text recovery dump. Keep the request summary as a separate status record.
+Include service identity and return startup/server errors for structured logging
+after deferred cleanup. Do not use Fatal/Panic/DPanic for routine errors.
+
+Every product use case logs its operation and terminal outcome: successful
+completion at Info, validation/not-found/conflict/cancellation rejections at
+Warn, unexpected errors at Error. Committed writes with optional cache/publisher
+failures log a degraded completion at Warn. Keep payloads off these summary logs.
+Validation logs include stable reason, field and rule identifiers.
+Malformed JSON is a transport rejection, logged before calling a use case.
+Only partially decoded typed input is available for malformed requests; never
+dump raw malformed bytes. Domain validation returns ErrInvalidProduct (HTTP 400).
+
+Generic operation logging belongs in pkg/logger/operation.go. Configure component
+and operation names; pkg/apperror classifies typed, module-owned expected errors.
+Generic required-string validation (including IDs) and field/rule metadata belong
+in pkg/validation. These two framework-free shared primitives may be imported by
+domain packages; product-specific constraints and error codes stay in the domain.
+Never import domains into pkg. Defer Operation.Finish through a closure, call Succeed after a successful
+response is built, and use Degrade for optional dependency failures.
 
 ### Span waterfall — product domain (unchanged)
 

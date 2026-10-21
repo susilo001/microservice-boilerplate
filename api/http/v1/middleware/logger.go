@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -29,6 +30,15 @@ func Logger(log *zap.Logger) gin.HandlerFunc {
 		if len(c.Errors) > 0 {
 			fields = append(fields, zap.Error(c.Errors.Last().Err))
 		}
-		log.Info("request", fields...)
+		switch {
+		case c.Writer.Status() >= http.StatusInternalServerError:
+			log.Error("request", fields...)
+		case c.Writer.Status() >= http.StatusBadRequest:
+			log.Warn("request", fields...)
+		case c.Request.URL.Path == "/health" || c.Request.URL.Path == "/ready":
+			log.Debug("request", fields...)
+		default:
+			log.Info("request", fields...)
+		}
 	}
 }

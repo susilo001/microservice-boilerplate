@@ -2,6 +2,7 @@ package usecase_test
 
 import (
 	"context"
+	"go.uber.org/zap"
 	"testing"
 
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
@@ -36,7 +37,7 @@ func TestGetProductUseCase_Execute(t *testing.T) {
 			if tt.seed != nil {
 				repo.products[tt.seed.ID] = tt.seed
 			}
-			uc := usecase.NewGetProductUseCase(repo, &mockProductCache{})
+			uc := usecase.NewGetProductUseCase(repo, &mockProductCache{}, zap.NewNop())
 
 			res, err := uc.Execute(context.Background(), tt.id)
 

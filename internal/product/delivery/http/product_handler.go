@@ -1,13 +1,20 @@
 package http
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"time"
 
+	pkglogger "github.com/boilerplate/microservice-boilerplate/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.uber.org/zap"
 
 	apiresp "github.com/boilerplate/microservice-boilerplate/api/http/v1/response"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
@@ -24,6 +31,7 @@ type ProductHandler struct {
 	createUC usecase.CreateProductUseCase
 	updateUC usecase.UpdateProductUseCase
 	deleteUC usecase.DeleteProductUseCase
+	log      *zap.Logger
 }
 
 func NewProductHandler(
@@ -32,6 +40,7 @@ func NewProductHandler(
 	createUC usecase.CreateProductUseCase,
 	updateUC usecase.UpdateProductUseCase,
 	deleteUC usecase.DeleteProductUseCase,
+	log *zap.Logger,
 ) *ProductHandler {
 	return &ProductHandler{
 		getUC:    getUC,
@@ -39,6 +48,7 @@ func NewProductHandler(
 		createUC: createUC,
 		updateUC: updateUC,
 		deleteUC: deleteUC,
+		log:      log,
 	}
 }
 
@@ -95,9 +105,13 @@ func (h *ProductHandler) List(c *gin.Context) {
 	correlationID := c.GetString("correlationid")
 	var req request.ListProductsRequest
 	if err := queryutil.Bind(c.Request.URL.Query(), &req); err != nil {
+		log := pkglogger.FromContext(ctx, h.log).With(zap.String("operation", "ListProducts"))
+		log.Warn("request decoding rejected", zap.String("reason", "invalid_query"))
+		pkglogger.DebugPayload(log, "request decoding input", "request", req)
+		pkglogger.DebugPayload(log, "request decoding response", "response", map[string]any{"error": "invalid_query"})
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		_ = c.Error(err)
+		_ = c.Error(fmt.Errorf("%w: invalid query parameters", queryutil.ErrInvalidQuery))
 		return
 	}
 	span.SetAttributes(
@@ -141,10 +155,11 @@ func (h *ProductHandler) Create(c *gin.Context) {
 	correlationID := c.GetString("correlationid")
 
 	var req request.CreateProductRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := decodeProductJSON(c.Request.Body, &req); err != nil {
+		h.logDecodeFailure(ctx, "CreateProduct", req)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		c.JSON(http.StatusBadRequest, apiresp.NewError(correlationID, tin, time.Now(), err.Error()))
+		c.JSON(http.StatusBadRequest, apiresp.NewError(correlationID, tin, time.Now(), "invalid JSON request"))
 		return
 	}
 
@@ -183,10 +198,11 @@ func (h *ProductHandler) Update(c *gin.Context) {
 	correlationID := c.GetString("correlationid")
 
 	var req request.UpdateProductRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := decodeProductJSON(c.Request.Body, &req); err != nil {
+		h.logDecodeFailure(ctx, "UpdateProduct", req)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		c.JSON(http.StatusBadRequest, apiresp.NewError(correlationID, tin, time.Now(), err.Error()))
+		c.JSON(http.StatusBadRequest, apiresp.NewError(correlationID, tin, time.Now(), "invalid JSON request"))
 		return
 	}
 
@@ -198,6 +214,25 @@ func (h *ProductHandler) Update(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, apiresp.NewSuccess(correlationID, tin, time.Now(), res))
+}
+
+func decodeProductJSON(body io.Reader, target any) error {
+	decoder := json.NewDecoder(body)
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return errors.New("request must contain exactly one JSON value")
+	}
+	return nil
+}
+
+func (h *ProductHandler) logDecodeFailure(ctx context.Context, operation string, input any) {
+	log := pkglogger.FromContext(ctx, h.log).With(zap.String("operation", operation))
+	log.Warn("request decoding rejected", zap.String("reason", "invalid_json"))
+	pkglogger.DebugPayload(log, "request decoding input", "request", input)
+	pkglogger.DebugPayload(log, "request decoding response", "response", map[string]any{"error": "invalid_json"})
 }
 
 // Delete deletes a product by ID.
