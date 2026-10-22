@@ -32,9 +32,10 @@ func (m *mockProductRepository) Create(_ context.Context, p *entity.Product) err
 	if m.createErr != nil {
 		return m.createErr
 	}
-	p.CreatedAt = time.Now()
+	p.CreatedAt = time.Now().UTC()
 	p.UpdatedAt = p.CreatedAt
-	m.products[p.ID] = p
+	stored := *p
+	m.products[p.ID] = &stored
 	return nil
 }
 
@@ -47,18 +48,8 @@ func (m *mockProductRepository) FindByID(_ context.Context, id string) (*entity.
 	if !ok {
 		return nil, entity.ErrProductNotFound
 	}
-	return p, nil
-}
-
-func (m *mockProductRepository) FindAll(_ context.Context) ([]entity.Product, error) {
-	if m.findErr != nil {
-		return nil, m.findErr
-	}
-	out := make([]entity.Product, 0, len(m.products))
-	for _, p := range m.products {
-		out = append(out, *p)
-	}
-	return out, nil
+	product := *p
+	return &product, nil
 }
 
 func (m *mockProductRepository) FindAllPaginated(_ context.Context, params request.ListProductsRequest) ([]entity.Product, int64, error) {
@@ -153,8 +144,23 @@ func (m *mockProductRepository) Update(_ context.Context, p *entity.Product) err
 	if m.updateErr != nil {
 		return m.updateErr
 	}
-	p.UpdatedAt = time.Now()
-	m.products[p.ID] = p
+	stored, ok := m.products[p.ID]
+	if !ok {
+		return entity.ErrProductNotFound
+	}
+	if stored.Version != p.Version {
+		return entity.ErrProductConflict
+	}
+	updated := *stored
+	updated.Name = p.Name
+	updated.Description = p.Description
+	updated.Price = p.Price
+	updated.Stock = p.Stock
+	updated.Version++
+	updated.UpdatedAt = time.Now().UTC()
+	m.products[p.ID] = &updated
+	p.Version = updated.Version
+	p.UpdatedAt = updated.UpdatedAt
 	return nil
 }
 

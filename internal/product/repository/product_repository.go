@@ -62,22 +62,6 @@ func (r *productRepository) FindByID(ctx context.Context, id string) (*entity.Pr
 	return &product, nil
 }
 
-func (r *productRepository) FindAll(ctx context.Context) ([]entity.Product, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	ctx, span := tracer.Start(ctx, "product.repository.FindAll")
-	defer span.End()
-
-	var products []entity.Product
-	if err := r.db.WithContext(ctx).Find(&products).Error; err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("repository find all products: %w", err)
-	}
-	span.SetAttributes(attribute.Int("count", len(products)))
-	return products, nil
-}
-
 func (r *productRepository) FindAllPaginated(ctx context.Context, params request.ListProductsRequest) ([]entity.Product, int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
