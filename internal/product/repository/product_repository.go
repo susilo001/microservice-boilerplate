@@ -15,7 +15,7 @@ import (
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
 	domainrepo "github.com/boilerplate/microservice-boilerplate/internal/product/domain/repository"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
-	"github.com/boilerplate/microservice-boilerplate/pkg/queryutil"
+	"github.com/boilerplate/microservice-boilerplate/pkg/validation"
 )
 
 var tracer = otel.Tracer("product/repository")
@@ -71,29 +71,38 @@ func (r *productRepository) FindAllPaginated(ctx context.Context, params request
 		attribute.Int("page", params.Page),
 		attribute.Int("limit", params.PageSize),
 		attribute.String("search", params.Search),
-		attribute.String("sort", params.Sort),
+		attribute.Int("sort.count", len(params.Sorts)),
 	)
 
-	// base query shared by count + find, filters applied once.
-	// ponytail: portable LOWER(col) LIKE search across drivers (postgres/
-	// mysql/sqlite/sqlserver); swap for Postgres tsvector + GIN index if
-	// ranked relevance is ever needed — fine for a boilerplate reference domain.
-	qp, err := queryutil.BuildListParams(params)
+	query, err := productListQuery(params)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, 0, fmt.Errorf("build product list query: %w", err)
 	}
-	query := queryutil.ApplySearchAndFilters(r.db.WithContext(ctx).Model(&entity.Product{}), qp)
+	generator := productListGenerator()
+	countScopes, err := generator.CountScopes(query)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, 0, &validation.Error{Field: "query", Rule: "allowed_query", Cause: entity.ErrInvalidProductQuery, Source: fmt.Errorf("build count scopes: %w", err)}
+	}
+	listScopes, err := generator.Scopes(query)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, 0, &validation.Error{Field: "query", Rule: "allowed_query", Cause: entity.ErrInvalidProductQuery, Source: fmt.Errorf("build list scopes: %w", err)}
+	}
+	base := r.db.WithContext(ctx).Model(&entity.Product{})
 
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
+	if err := base.Session(&gorm.Session{}).Scopes(countScopes...).Count(&total).Error; err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, 0, fmt.Errorf("repository count products: %w", err)
 	}
 
-	findQuery := queryutil.ApplySortPreloadPage(query.Session(&gorm.Session{}), qp)
+	findQuery := base.Session(&gorm.Session{}).Scopes(listScopes...)
 
 	var products []entity.Product
 	if err := findQuery.Find(&products).Error; err != nil {

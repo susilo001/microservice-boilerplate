@@ -17,7 +17,6 @@ import (
 	producthttp "github.com/boilerplate/microservice-boilerplate/internal/product/delivery/http"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
 	pkglogger "github.com/boilerplate/microservice-boilerplate/pkg/logger"
-	"github.com/boilerplate/microservice-boilerplate/pkg/queryutil"
 )
 
 type Options struct {
@@ -49,7 +48,7 @@ func NewRouter(handler *producthttp.ProductHandler, log *zap.Logger, serviceName
 		if errors.Is(err, context.DeadlineExceeded) {
 			return http.StatusGatewayTimeout
 		}
-		if errors.Is(err, entity.ErrInvalidProduct) || errors.Is(err, entity.ErrInvalidSortField) || errors.Is(err, entity.ErrInvalidPreload) || errors.Is(err, queryutil.ErrInvalidQuery) {
+		if errors.Is(err, entity.ErrInvalidProduct) || errors.Is(err, entity.ErrInvalidSortField) || errors.Is(err, entity.ErrInvalidPreload) || errors.Is(err, entity.ErrInvalidProductQuery) {
 			return http.StatusBadRequest
 		}
 		return http.StatusInternalServerError

@@ -34,3 +34,15 @@ func TestRequiredWithoutCause(t *testing.T) {
 		t.Fatalf("unexpected validation error: %v", err)
 	}
 }
+
+func TestErrorPreservesSourceWithoutExposingIt(t *testing.T) {
+	cause := errors.New("invalid query")
+	source := errors.New("private parser detail")
+	err := &Error{Field: "filter", Rule: "valid_syntax", Cause: cause, Source: source}
+	if !errors.Is(err, cause) || !errors.Is(err, source) {
+		t.Fatalf("validation error lost its cause or source: %v", err)
+	}
+	if err.Error() != "invalid query: filter failed valid_syntax validation" {
+		t.Fatalf("unexpected public message: %s", err)
+	}
+}

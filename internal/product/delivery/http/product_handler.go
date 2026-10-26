@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	pkglogger "github.com/boilerplate/microservice-boilerplate/pkg/logger"
@@ -16,11 +19,13 @@ import (
 	"go.uber.org/zap"
 
 	apiresp "github.com/boilerplate/microservice-boilerplate/api/http/v1/response"
+	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
 	_ "github.com/boilerplate/microservice-boilerplate/internal/product/domain/response"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/usecase"
 	"github.com/boilerplate/microservice-boilerplate/pkg/apperror"
-	"github.com/boilerplate/microservice-boilerplate/pkg/queryutil"
+	"github.com/boilerplate/microservice-boilerplate/pkg/validation"
+	"github.com/susilo001/sql-generator/binding"
 )
 
 var tracer = otel.Tracer("product/handler")
@@ -84,15 +89,15 @@ func (h *ProductHandler) GetByID(c *gin.Context) {
 // List returns a paginated list of products.
 //
 // @Summary      List products
-// @Description  Returns a paginated list of products. Filters use field:operator:value; sort uses field:direction.
+// @Description  Returns a paginated list of products. Filters use field:value:operator separated by |; sort uses field:direction.
 // @Tags         products
 // @Produce      json
 // @Param        page       query     int     false  "Page number (default 1)"
 // @Param        page_size  query     int     false  "Items per page (default 20)"
 // @Param        search     query     string  false  "Substring search across name and description"
-// @Param        filter     query     string  false  "Repeatable filter: name:eq:Widget, price:gte:10, stock:lte:50"
+// @Param        filter     query     string  false  "Filters: name:Widget:equals|price:10:greaterthanorequal|stock:50:lessthanorequal"
 // @Param        sort       query     string  false  "Sort: name:asc, price:desc, stock:asc, created_at:desc, updated_at:desc"
-// @Param        preload    query     string  false  "Comma-separated relations to eager-load"
+// @Param        preload    query     string  false  "Product has no relations; preload values are rejected"
 // @Success      200  {object}  apiresp.APIResponse[apiresp.ListData[response.ProductResponse]]
 // @Failure      400  {object}  apiresp.APIResponse[apiresp.Empty]
 // @Failure      500  {object}  apiresp.APIResponse[apiresp.Empty]
@@ -103,8 +108,8 @@ func (h *ProductHandler) List(c *gin.Context) {
 
 	tin := apiresp.ContextTime(c, "tin")
 	correlationID := c.GetString("correlationid")
-	var req request.ListProductsRequest
-	if err := queryutil.Bind(c.Request.URL.Query(), &req); err != nil {
+	req, err := parseProductListRequest(c.Request)
+	if err != nil {
 		log := pkglogger.FromContext(ctx, h.log).With(zap.String("operation", "ListProducts"))
 		details := apperror.Classify(err)
 		log.Warn("request decoding rejected", zap.String("reason", details.Reason),
@@ -120,7 +125,7 @@ func (h *ProductHandler) List(c *gin.Context) {
 		attribute.Int("page", req.Page),
 		attribute.Int("page_size", req.PageSize),
 		attribute.String("search", req.Search),
-		attribute.String("sort", req.Sort),
+		attribute.Int("sort.count", len(req.Sorts)),
 	)
 
 	start := time.Now()
@@ -276,4 +281,52 @@ func (h *ProductHandler) Delete(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusNoContent, apiresp.NewSuccess(correlationID, tin, time.Now(), struct{}{}))
+}
+
+func parseProductListRequest(httpRequest *http.Request) (request.ListProductsRequest, error) {
+	if err := validateProductListClauses(httpRequest.URL.Query()); err != nil {
+		return request.ListProductsRequest{}, err
+	}
+	query, err := binding.ParseRequest(httpRequest, &binding.URLParseOptions{
+		PageSizeKey: "page_size", PreloadsKey: "preload", StrictPagination: true,
+	})
+	if err != nil {
+		return request.ListProductsRequest{}, &validation.Error{Field: "query", Rule: "valid_syntax", Cause: entity.ErrInvalidProductQuery, Source: fmt.Errorf("parse product list query: %w", err)}
+	}
+	params := query.SelectParameter
+	req := request.ListProductsRequest{Page: params.PageDescriptor.Page, PageSize: params.PageDescriptor.PageSize, Search: query.Search, Preload: params.Preloads}
+	for _, filter := range params.Filters {
+		req.Filters = append(req.Filters, request.ProductFilter{Field: filter.FieldName, Operator: request.ProductFilterOperator(filter.Operator), Value: filter.Value})
+	}
+	for _, sort := range params.Sorts {
+		req.Sorts = append(req.Sorts, request.ProductSort{Field: sort.FieldName, Direction: request.ProductSortDirection(sort.SortDirection)})
+	}
+	return req.Normalize()
+}
+
+func validateProductListClauses(values url.Values) error {
+	if _, ok := values["fields"]; ok {
+		return &validation.Error{Field: "fields", Rule: "unsupported", Cause: entity.ErrInvalidProductQuery}
+	}
+	for _, key := range []string{"filter", "sort", "preload"} {
+		clauses, ok := values[key]
+		if !ok {
+			continue
+		}
+		if key == "sort" && len(clauses) != 1 {
+			return &validation.Error{Field: key, Rule: "valid_syntax", Cause: entity.ErrInvalidProductQuery}
+		}
+		separator := ","
+		if key == "filter" {
+			separator = "|"
+		}
+		for _, value := range clauses {
+			for _, clause := range strings.Split(value, separator) {
+				if strings.TrimSpace(clause) == "" {
+					return &validation.Error{Field: key, Rule: "valid_syntax", Cause: entity.ErrInvalidProductQuery}
+				}
+			}
+		}
+	}
+	return nil
 }

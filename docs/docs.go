@@ -19,7 +19,7 @@ const docTemplate = `{
     "paths": {
         "/api/v1/products": {
             "get": {
-                "description": "Returns a paginated list of products. Filters use field:operator:value; sort uses field:direction.",
+                "description": "Returns a paginated list of products. Filters use field:value:operator separated by |; sort uses field:direction.",
                 "produces": [
                     "application/json"
                 ],
@@ -48,7 +48,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Repeatable filter: name:eq:Widget, price:gte:10, stock:lte:50",
+                        "description": "Filters: name:Widget:equals|price:10:greaterthanorequal|stock:50:lessthanorequal",
                         "name": "filter",
                         "in": "query"
                     },
@@ -60,7 +60,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Comma-separated relations to eager-load",
+                        "description": "Product has no relations; preload values are rejected",
                         "name": "preload",
                         "in": "query"
                     }

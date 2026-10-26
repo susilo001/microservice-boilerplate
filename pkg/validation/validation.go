@@ -1,14 +1,16 @@
 package validation
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
 
 type Error struct {
-	Field string
-	Rule  string
-	Cause error
+	Field  string
+	Rule   string
+	Cause  error
+	Source error
 }
 
 func (err *Error) Error() string {
@@ -20,6 +22,9 @@ func (err *Error) Error() string {
 }
 
 func (err *Error) Unwrap() error {
+	if err.Source != nil {
+		return errors.Join(err.Cause, err.Source)
+	}
 	return err.Cause
 }
 

@@ -1,5 +1,10 @@
 package request
 
+import (
+	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/entity"
+	"github.com/boilerplate/microservice-boilerplate/pkg/validation"
+)
+
 type CreateProductRequest struct {
 	Name        string  `json:"name"        binding:"required"      example:"Wireless Keyboard"`
 	Description string  `json:"description"                          example:"Compact mechanical keyboard"`
@@ -14,14 +19,56 @@ type UpdateProductRequest struct {
 	Stock       int     `json:"stock"       binding:"gte=0"          example:"75"`
 }
 
-// ListProductsRequest is product list's public query contract. Filter and
-// sort use field:operator:value and field:direction forms. Tags are explicit
-// allow-lists for SQL identifiers, never inferred from entity fields.
+// ListProductsRequest carries structured input parsed from field:value:operator
+// filters and field:direction sorts. The repository owns the SQL allow-lists.
 type ListProductsRequest struct {
-	Page     int      `query:"page,default=1,min=1"`
-	PageSize int      `query:"page_size,default=20,min=1"`
-	Search   string   `query:"search" search:"name,description"`
-	Filters  []string `query:"filter" filter:"name:string:eq|like,price:float64:eq|gte|lte,stock:int:eq|gte|lte"`
-	Sort     string   `query:"sort" sort:"name,price,stock,created_at,updated_at" sortkey:"id"`
-	Preload  []string `query:"preload,list" preload:""`
+	Page     int
+	PageSize int
+	Search   string
+	Filters  []ProductFilter
+	Sorts    []ProductSort
+	Preload  []string
+}
+
+type ProductFilter struct {
+	Field    string
+	Operator ProductFilterOperator
+	Value    any
+}
+
+type ProductSort struct {
+	Field     string
+	Direction ProductSortDirection
+}
+
+type ProductFilterOperator string
+
+const (
+	ProductFilterEqual              ProductFilterOperator = "IS_EQUAL"
+	ProductFilterContains           ProductFilterOperator = "IS_CONTAIN"
+	ProductFilterGreaterThanOrEqual ProductFilterOperator = "IS_MORE_THAN_OR_EQUAL"
+	ProductFilterLessThanOrEqual    ProductFilterOperator = "IS_LESS_THAN_OR_EQUAL"
+)
+
+type ProductSortDirection string
+
+const (
+	ProductSortAscending  ProductSortDirection = "ASCENDING"
+	ProductSortDescending ProductSortDirection = "DESCENDING"
+)
+
+func (req ListProductsRequest) Normalize() (ListProductsRequest, error) {
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	if req.PageSize == 0 {
+		req.PageSize = 20
+	}
+	if req.PageSize < 1 || req.PageSize > 100 {
+		return ListProductsRequest{}, &validation.Error{Field: "page_size", Rule: "between_1_and_100", Cause: entity.ErrInvalidProductQuery}
+	}
+	if req.Page < 1 || req.Page-1 > 100000/req.PageSize {
+		return ListProductsRequest{}, &validation.Error{Field: "page", Rule: "bounded_offset", Cause: entity.ErrInvalidProductQuery}
+	}
+	return req, nil
 }

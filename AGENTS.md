@@ -62,7 +62,7 @@ internal/product/
   cache/
   gateway/messaging/
   delivery/http/
-pkg/{databases,redis,kafka,retry,telemetry,tracing,viper,logger,crypto,http,queryutil,utils}/
+pkg/{databases,redis,kafka,retry,telemetry,tracing,viper,logger,crypto,http,utils}/
 migrations/postgres/                  # Reviewed schema changes
 docs/                                # Generated Swagger
 ```
@@ -118,8 +118,8 @@ RequestTimer → CorrelationID → otelgin → TraceContext → Logger → Error
 ### `pkg/`
 - Domain-agnostic, process-wide infrastructure — no imports from `internal/`
 - Use GORM-backed persistence infrastructure for CRUD domains.
-- `queryutil/` owns generic GORM list-query building and Gin list-query
-  parsing — it may import GORM/Gin but no domain package.
+- SQL list-query generation uses `github.com/susilo001/sql-generator` in repository adapters.
+  Handlers use its binding package; domains keep product-owned request structs.
 
 ### `cmd/`
 - Thin wiring only: load config → init OTel → connect infra → build use
@@ -340,45 +340,37 @@ type Event interface {
 - `*gorm.DB` never leaves `internal/product/repository/`
 
 ### List endpoints (search / sort / filter / preload)
-- Convention established by `internal/product`'s `GET /api/v1/products` —
-  follow this shape for any new CRUD domain's list endpoint.
-- Query params: `search` (substring match), repeated
-  `filter=field:operator:value` (e.g. `filter=price:gte:10`),
-  `sort=field:direction` (e.g. `sort=price:desc`), `preload`
-  (comma-separated relation names).
-- **Shared query-building lives in `pkg/queryutil`** — don't hand-roll
-  `Where()`/`Order()`/`Preload()`/`Offset()`/`Limit()` chains per domain.
-  Define one tagged request struct, parse it in handlers with
-  `queryutil.Bind`, call `queryutil.BuildListParams` in usecase to reject
-  malformed query syntax, then pass same request to repository.
-  Repository calls `BuildListParams`, `ApplySearchAndFilters`, and
-  `ApplySortPreloadPage`. See product's `ListProductsRequest` for reference.
-- Enforce page-size (100) and offset (100,000) bounds in BuildListParams,
-  including direct use-case callers. Reject malformed pagination rather than
-  silently clamping it. Direct Go zero values use defaults; HTTP values must
-  satisfy their declared minimums.
-- Declare a unique compile-time `sortkey` on the sort field (product uses `id`).
-  It supplies default ordering and a tie-breaker for explicit sorts. Offset
-  pagination is not a consistent snapshot during concurrent writes.
-- Tags form fixed allow-lists for SQL identifiers and value types:
-  `search:"name,description"`, `sort:"name,price"`,
-  `preload:"Category"`, and
-  `filter:"price:float64:eq|gte|lte,stock:int:eq|gte|lte"`. Never infer
-  columns/relations from entities or raw URL values. GORM does not
-  parameterize `ORDER BY`/`Preload` identifiers.
-- Filter values use GORM `?` placeholders. Only columns and SQL operators
-  from compile-time tags reach SQL. Invalid filter field/operator/value,
-  sort field/direction, or preload returns `400` via
-  `queryutil.ErrInvalidQuery`; never silently ignore malformed syntax.
-- Search is a portable `LOWER(col) LIKE ?` across all four GORM drivers —
-  not driver-specific full-text search (`tsvector`, `FULLTEXT`, FTS5,
-  `CONTAINS`). This is a deliberate simplification (`ponytail:` comment in
-  `product_repository.go`): fine for a boilerplate reference domain;
-  swap for Postgres `tsvector` + GIN index if ranked relevance is ever
-  needed, rather than silently defaulting either way.
-- `preload`'s allow-list may be empty for a domain with no relations
-  (e.g. `Product` today) — that's correct, not a bug; every `preload`
-  value is then rejected until a real relation is added.
+- Follow `internal/product`: handlers parse URLs with sql-generator's binding
+  package into a product-owned structured request, use cases normalize application
+  pagination limits, and repository adapters validate against an explicit schema
+  and generate GORM scopes. No GORM or generator implementation imports in domain
+  or usecase packages.
+- URL filters use `field:value:operator`, separated by `|`, for example
+  `filter=price:10:greaterthanorequal|stock:0:equals`.
+  Repeated filter parameters are also supported. Sort uses `field:asc|desc`;
+  comma-separated sorts are supported. Keep `page_size` and `preload` URL keys.
+- Define a developer-authored schema in the repository. Product permits name
+  equals/contains and price/stock equals/greaterthanorequal/lessthanorequal.
+  Search targets name and description. Sort permits name, price, stock,
+  created_at and updated_at. Never derive identifiers from URL values or expose
+  every entity field by default.
+- Enable StrictQueries and PortableSearch. Configure explicit AllowedSorts and
+  AllowedPreloads; an empty preload map rejects every preload for Product.
+  Filter values are parameterized; numeric values must pass configured ValueType
+  conversion, including finite float validation.
+- Reject malformed syntax, disallowed identifiers/operators, invalid values,
+  excessive pagination and preloads with HTTP 400 via the product-owned
+  entity.ErrInvalidProductQuery. Do not silently skip or clamp invalid requests.
+- Bound page size to 100 and offset to 100,000 for HTTP, direct use-case and
+  repository callers. Direct Go zero pagination selects page 1 and size 20;
+  explicitly nonpositive or empty HTTP pagination is rejected.
+- Configure a unique TieBreakerField (Product uses id) for default order and
+  explicit-sort ties. Offset pagination is not a consistent snapshot.
+- Use CountScopes for filtered totals and Scopes for the page, on separate GORM
+  sessions. Counts must exclude ordering, selection, preloads and pagination.
+- Case-insensitive substring search uses portable LOWER(column) LIKE across
+  PostgreSQL, MySQL, SQLite and SQL Server. Ranked search needs an explicit
+  requirement and a separate design.
 
 ### Error handling
 - Domain sentinel errors defined in `domain/entity/`

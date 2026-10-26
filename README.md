@@ -277,10 +277,35 @@ limits are enforced when a list use case is called outside HTTP. Zero-valued
 pagination in a direct Go request selects the defaults (page 1, size 20).
 
 Product lists default to `id asc`. Explicit sorts append `id asc` as a unique
-tie-breaker. New modules declare their unique pagination column through the
-compile-time `sortkey` tag. Offset pagination is not snapshot isolation: concurrent
+tie-breaker. New modules configure their unique pagination column through the
+sql-generator repository schema. Offset pagination is not snapshot isolation: concurrent
 writes can still shift pages. Use cursor pagination for large or fast-changing
 datasets. Product has no relations, so any requested preload is rejected.
+
+### SQL generator dependency
+
+List handlers parse `filter=field:value:operator` with `|` between clauses.
+For example:
+
+```text
+GET /api/v1/products?page=1&page_size=20&filter=price:10:greaterthanorequal%7Cstock:0:equals&sort=price:desc
+```
+
+Name supports `equals` and `contains`; price and stock support `equals`,
+`greaterthanorequal` and `lessthanorequal`. Sortable fields are name, price,
+stock, created_at and updated_at. Filters are combined with AND. Projection is
+not exposed and Product has no allowed preloads. Filter/sort counts are capped
+at 20/5. This replaces the previous `field:operator:value` filter syntax.
+
+Handlers produce product-owned structured requests. Use cases validate pagination,
+including for direct Go callers. Repositories validate filter, sort and preload
+allow-lists, own explicit schemas, numeric value validation and GORM scope
+generation through `github.com/susilo001/sql-generator`. Filtered totals use
+`CountScopes` separately from paginated `Scopes`.
+
+The service pins `github.com/susilo001/sql-generator` v1.5.0, so standalone
+CI and Docker builds do not need a sibling library checkout. Go 1.23 remains
+the baseline in both modules.
 
 ### Extending business workflows
 
@@ -339,7 +364,7 @@ environment variables are absent.
 | `GET` | `/health` | Liveness check |
 | `GET` | `/ready` | Primary database and product-schema readiness |
 | `GET` | `/swagger/*any` | Swagger UI |
-| `GET` | `/api/v1/products` | List products (paginated `?page=1&page_size=20`, searchable `?search=widget`, sortable `?sort=price:desc`, filterable `?filter=price:gte:10&filter=price:lte:100`, preloadable `?preload=relation`) |
+| `GET` | `/api/v1/products` | List products (paginated `?page=1&page_size=20`, searchable `?search=widget`, sortable `?sort=price:desc`, filterable `?filter=price:10:greaterthanorequal%7Cprice:100:lessthanorequal`) |
 | `GET` | `/api/v1/products/:id` | Get product by ID |
 | `POST` | `/api/v1/products` | Create product |
 | `PUT` | `/api/v1/products/:id` | Update product |

@@ -13,7 +13,6 @@ import (
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/request"
 	"github.com/boilerplate/microservice-boilerplate/internal/product/domain/response"
 	pkglogger "github.com/boilerplate/microservice-boilerplate/pkg/logger"
-	"github.com/boilerplate/microservice-boilerplate/pkg/queryutil"
 )
 
 var listTracer = otel.Tracer("product/usecase")
@@ -40,10 +39,11 @@ func (uc *listProductsUseCase) Execute(ctx context.Context, req request.ListProd
 		attribute.Int("page", req.Page),
 		attribute.Int("page_size", req.PageSize),
 		attribute.String("search", req.Search),
-		attribute.String("sort", req.Sort),
+		attribute.Int("sort.count", len(req.Sorts)),
 	)
 
-	if _, err := queryutil.BuildListParams(req); err != nil {
+	req, err = req.Normalize()
+	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, 0, err

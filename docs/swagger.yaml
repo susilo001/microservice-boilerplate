@@ -134,8 +134,8 @@ info:
 paths:
   /api/v1/products:
     get:
-      description: Returns a paginated list of products. Filters use field:operator:value;
-        sort uses field:direction.
+      description: Returns a paginated list of products. Filters use field:value:operator
+        separated by |; sort uses field:direction.
       parameters:
       - description: Page number (default 1)
         in: query
@@ -149,7 +149,7 @@ paths:
         in: query
         name: search
         type: string
-      - description: 'Repeatable filter: name:eq:Widget, price:gte:10, stock:lte:50'
+      - description: 'Filters: name:Widget:equals|price:10:greaterthanorequal|stock:50:lessthanorequal'
         in: query
         name: filter
         type: string
@@ -157,7 +157,7 @@ paths:
         in: query
         name: sort
         type: string
-      - description: Comma-separated relations to eager-load
+      - description: Product has no relations; preload values are rejected
         in: query
         name: preload
         type: string

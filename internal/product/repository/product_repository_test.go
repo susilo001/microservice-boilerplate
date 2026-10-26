@@ -145,7 +145,7 @@ func TestProductRepository_FindAllPaginated_SearchAndSort(t *testing.T) {
 		Page:     1,
 		PageSize: 10,
 		Search:   "widget",
-		Sort:     "price:asc",
+		Sorts:    []request.ProductSort{{Field: "price", Direction: "ASCENDING"}},
 	})
 	if err != nil {
 		t.Fatalf("FindAllPaginated: %v", err)
@@ -175,7 +175,7 @@ func TestProductRepository_FindAllPaginated_Filter(t *testing.T) {
 	products, total, err := repo.FindAllPaginated(context.Background(), request.ListProductsRequest{
 		Page:     1,
 		PageSize: 10,
-		Filters:  []string{"price:gte:10", "price:lte:20"},
+		Filters:  []request.ProductFilter{{Field: "price", Operator: "IS_MORE_THAN_OR_EQUAL", Value: "10"}, {Field: "price", Operator: "IS_LESS_THAN_OR_EQUAL", Value: "20"}},
 	})
 	if err != nil {
 		t.Fatalf("FindAllPaginated: %v", err)

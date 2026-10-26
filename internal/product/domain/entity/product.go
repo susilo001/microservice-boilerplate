@@ -10,11 +10,12 @@ import (
 )
 
 var (
-	ErrProductNotFound  = &apperror.Error{Code: "product_not_found", Message: "product not found"}
-	ErrProductConflict  = &apperror.Error{Code: "product_conflict", Message: "product changed concurrently"}
-	ErrInvalidProduct   = &apperror.Error{Code: "invalid_product", Message: "invalid product"}
-	ErrInvalidSortField = errors.New("invalid sort field")
-	ErrInvalidPreload   = errors.New("invalid preload relation")
+	ErrProductNotFound     = &apperror.Error{Code: "product_not_found", Message: "product not found"}
+	ErrProductConflict     = &apperror.Error{Code: "product_conflict", Message: "product changed concurrently"}
+	ErrInvalidProduct      = &apperror.Error{Code: "invalid_product", Message: "invalid product"}
+	ErrInvalidProductQuery = &apperror.Error{Code: "invalid_query", Message: "invalid list query"}
+	ErrInvalidSortField    = errors.New("invalid sort field")
+	ErrInvalidPreload      = errors.New("invalid preload relation")
 )
 
 type Product struct {
